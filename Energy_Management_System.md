@@ -1,5 +1,5 @@
 # Energy Management System — Zarlardinge
-## Technisch werkdocument v0.3 — April 2026
+## Technisch werkdocument v0.7 — April 2026
 
 **ESP32-C6 · Arduino IDE · ESPAsyncWebServer · Matter · Google Sheets**
 *Filip Dworp (FiDel) — Zarlardinge (BE)*
@@ -408,26 +408,42 @@ Identiek aan alle andere Zarlar-controllers:
 - POST naar Google Apps Script (GAS) nieuw script aan te maken
 - Nieuw tabblad `S-ENERGY` in de Zarlar Google Sheet
 
-### 9.1 Kolommen GAS script (A tot P)
+### 9.1 Kolommen GAS-script tabblad "Data" — definitieve versie
 
-| Kolom | Key | Beschrijving |
-| --- | --- | --- |
-| A | --- | Tijdstip |
-| B | a | Solar vermogen W |
-| C | b | Verbruik WON W |
-| D | c | Verbruik SCH W |
-| E | d | Overschot W (a-b-c) |
-| F | h | Solar dag kWh |
-| G | i | WON dag kWh |
-| H | j | SCH dag kWh |
-| I | e | ECO-boiler aan/uit |
-| J | f | Tesla laden aan/uit |
-| K | g | Override actief |
-| L | n | EPEX prijs huidig EUR/kWh |
-| M | o | LED-strip status (0-7) |
-| N | p | Pushbericht verstuurd (0/1) |
-| O | ac | WiFi RSSI dBm |
-| P | ae | Heap largest block bytes |
+Dit tabblad bevat de continue logging (elke 5-15 minuten één rij).
+Het is de **enige referentie** voor de GAS "Data" kolommen.
+Keys verwijzen naar §11.4.
+
+| Kol | Key | Beschrijving | Eenheid |
+| --- | --- | --- | --- |
+| A | — | Tijdstip | datetime |
+| B | a | Solar vermogen | W |
+| C | b | Verbruik WON | W |
+| D | c | Verbruik SCH | W |
+| E | d | Overschot (a-b-c) | W |
+| F | h | Solar productie dag | Wh |
+| G | i | WON verbruik dag bruto | Wh |
+| H | j | SCH verbruik dag bruto | Wh |
+| I | v | Injectie dag | Wh |
+| J | q | Kost WON dag — dynamisch | EUR/100 |
+| K | qv | Kost WON dag — vast | EUR/100 |
+| L | r | Kost SCH dag — dynamisch | EUR/100 |
+| M | rv | Kost SCH dag — vast | EUR/100 |
+| N | s | Solar opbrengst dag — dynamisch | EUR/100 |
+| O | sv | Solar opbrengst dag — vast | EUR/100 |
+| P | n | EPEX prijs huidig kwartier | EUR/kWh x1000 |
+| Q | n2 | EPEX prijs volgend kwartier | EUR/kWh x1000 |
+| R | nv | Vast tarief geconfigureerd | EUR/kWh x1000 |
+| S | pt | Piek gecombineerde afname (maand) | W |
+| T | pw | Piek WON individueel (maand) | W |
+| U | ps | Piek SCH individueel (maand) | W |
+| V | e | ECO-boiler aan/uit | 0/1 |
+| W | f | Tesla laden aan/uit | 0/1 |
+| X | g | Override actief | 0/1 |
+| Y | o | LED-strip status | 0-7 |
+| Z | eod | End-of-day vlag | 0/1 |
+| AA | ac | WiFi RSSI | dBm |
+| AB | ae | Heap largest block | bytes |
 
 ---
 
@@ -527,7 +543,12 @@ Wat nieuw is ten opzichte van ECO-boiler:
 | `/log` | SPIFFS debug.log | Lokaal enkel |
 | `/restart` | Controller herstarten | Lokaal enkel |
 
-### 11.4 JSON /json endpoint — keys
+### 11.4 JSON /json endpoint — volledige en definitieve key-lijst
+
+Dit is de **enige referentie** voor alle /json keys. Sectie 9.1 (GAS-kolommen)
+en sectie 16.4 (Sheets-architectuur) zijn hierop gebaseerd.
+
+**Real-time vermogen:**
 
 | Key | Beschrijving | Eenheid |
 | --- | --- | --- |
@@ -535,15 +556,58 @@ Wat nieuw is ten opzichte van ECO-boiler:
 | b | Verbruik WON huidig | W |
 | c | Verbruik SCH huidig | W |
 | d | Overschot (a-b-c, negatief = tekort) | W |
+
+**Dagcumulatieven — energie (kWh):**
+
+| Key | Beschrijving | Eenheid |
+| --- | --- | --- |
+| h | Solar productie dag | Wh |
+| i | WON verbruik dag bruto | Wh |
+| j | SCH verbruik dag bruto | Wh |
+| v | Injectie naar net dag | Wh |
+
+**Dagcumulatieven — kost dynamisch tarief (EPEX):**
+
+| Key | Beschrijving | Eenheid |
+| --- | --- | --- |
+| q | Kost WON dag — dynamisch | EUR x100 (int) |
+| r | Kost SCH dag — dynamisch | EUR x100 (int) |
+| s | Solar opbrengst dag — dynamisch | EUR x100 (int) |
+
+**Dagcumulatieven — kost vast tarief (vergelijking):**
+
+| Key | Beschrijving | Eenheid |
+| --- | --- | --- |
+| qv | Kost WON dag — vast tarief | EUR x100 (int) |
+| rv | Kost SCH dag — vast tarief | EUR x100 (int) |
+| sv | Solar opbrengst dag — vast tarief | EUR x100 (int) |
+
+**EPEX-prijzen:**
+
+| Key | Beschrijving | Eenheid |
+| --- | --- | --- |
+| n | EPEX prijs huidig kwartier | EUR/kWh x1000 (int) |
+| n2 | EPEX prijs volgend kwartier | EUR/kWh x1000 (int) |
+| nv | Vast tarief geconfigureerd | EUR/kWh x1000 (int) |
+
+**Vermogenpiek huidige maand:**
+
+| Key | Beschrijving | Eenheid |
+| --- | --- | --- |
+| pt | Piek gecombineerde netto afname (basis capaciteitstarief) | W (int) |
+| pw | Piek netto afname WON individueel | W (int) |
+| ps | Piek netto afname SCH individueel | W (int) |
+
+**Sturings- en systeemstatus:**
+
+| Key | Beschrijving | Eenheid |
+| --- | --- | --- |
 | e | ECO-boiler aan/uit (fase 2) | 0/1 |
 | f | Tesla laden aan/uit (fase 2) | 0/1 |
 | g | Override actief | 0/1 |
-| h | Solar dag cumulatief | Wh |
-| i | WON dag cumulatief | Wh |
-| j | SCH dag cumulatief | Wh |
-| n | EPEX prijs huidig kwartier | EUR/kWh x1000 (int) |
 | o | LED-strip actieve positie (0-7) | int |
 | p | Laatste push verstuurd (unix timestamp) | int |
+| eod | End-of-day vlag (00:00–00:05) | 0/1 |
 | ac | WiFi RSSI | dBm |
 | ae | Heap largest block | bytes |
 
@@ -855,39 +919,13 @@ void bootHerstel() {
 
 ### 16.4 Google Sheets — architectuur twee tabbladen
 
-#### Tabblad "Data" — continue 15-minuten logging
+#### Tabblad "Data" — continue logging
 
-Identiek aan alle andere Zarlar-controllers. Zarlar Dashboard pollt /json elke 5 minuten
-en schrijft een rij. Aanvulling voor Smart Energy: ook om de 15 minuten (bij kwartierwissel)
-een volledige rij met kostendata.
+Zarlar Dashboard pollt /json elke 5 minuten. Bij kwartierwissel (elke 15 min)
+wordt ook de volledige kostendata opgenomen. Eén rij per pollingcyclus.
 
-**Kolommen tabblad "Data" (A tot W):**
-
-| Kol | Key | Beschrijving | Eenheid |
-| --- | --- | --- | --- |
-| A | --- | Tijdstip | datetime |
-| B | a | Solar vermogen | W |
-| C | b | Verbruik WON vermogen | W |
-| D | c | Verbruik SCH vermogen | W |
-| E | d | Overschot (a-b-c) | W |
-| F | h | Solar dag cumulatief | Wh |
-| G | i | WON dag cumulatief bruto | Wh |
-| H | j | SCH dag cumulatief bruto | Wh |
-| I | v | Injectie dag cumulatief | Wh |
-| J | q | Kost WON dag cumulatief | EUR/100 |
-| K | r | Kost SCH dag cumulatief | EUR/100 |
-| L | s | Solar opbrengst dag cumulatief | EUR/100 |
-| M | n | EPEX prijs huidig kwartier | EUR/kWh x1000 |
-| N | n2 | EPEX prijs volgend kwartier | EUR/kWh x1000 |
-| O | pk | Piek vermogen huidige maand | W |
-| P | e | ECO-boiler aan/uit | 0/1 |
-| Q | f | Tesla laden aan/uit | 0/1 |
-| R | g | Override actief | 0/1 |
-| S | o | LED-strip status | 0-7 |
-| T | --- | (reserve) | --- |
-| U | ac | WiFi RSSI | dBm |
-| V | ae | Heap largest block | bytes |
-| W | --- | Versie firmware | string |
+**Kolomdefinitie: zie §9.1** — dit is de enige referentie voor de "Data" kolommen.
+Kolommen A-AB (28 velden: tijdstip + alle JSON-keys uit §11.4).
 
 #### Tabblad "Verbruik" — dagelijkse samenvatting
 
@@ -1092,29 +1130,11 @@ Inj. tarief vast:      [0,280] EUR/kWh (terugdraaiende teller = zelfde prijs)
 
 ---
 
-### 16.9 Nieuwe JSON-keys /json endpoint
+### 16.9 JSON-keys
 
-| Key | Beschrijving | Eenheid |
-| --- | --- | --- |
-| h | Solar dag kWh cumulatief | Wh |
-| i | WON dag kWh cumulatief bruto | Wh |
-| j | SCH dag kWh cumulatief bruto | Wh |
-| v | Injectie dag kWh cumulatief | Wh |
-| q | Kost WON dag — dynamisch (EPEX) | EUR x100 (int) |
-| qv | Kost WON dag — vast tarief | EUR x100 (int) |
-| r | Kost SCH dag — dynamisch (EPEX) | EUR x100 (int) |
-| rv | Kost SCH dag — vast tarief | EUR x100 (int) |
-| s | Solar opbrengst dag — dynamisch | EUR x100 (int) |
-| sv | Solar opbrengst dag — vast | EUR x100 (int) |
-| n | EPEX prijs huidig kwartier | EUR/kWh x1000 (int) |
-| n2 | EPEX prijs volgend kwartier | EUR/kWh x1000 (int) |
-| nv | Vast tarief geconfigureerd | EUR/kWh x1000 (int) |
-| pt | Piek gecombineerde netto afname (capaciteitstarief) | W (int) |
-| pw | Piek netto afname WON individueel | W (int) |
-| ps | Piek netto afname SCH individueel | W (int) |
-| eod | End-of-day vlag (00:00-00:05) | 0/1 |
-| ac | WiFi RSSI | dBm |
-| ae | Heap largest block | bytes |
+Alle JSON-keys zijn gedefinieerd in **§11.4** — de enige referentie.
+De GAS "Data" kolommen zijn gedefinieerd in **§9.1**.
+De SPIFFS dagbestanden en GAS "Verbruik" kolommen staan in §16.5 en §16.4.
 
 ---
 
@@ -1153,4 +1173,5 @@ Sketch v0.3 (LED + push):
 | v0.3 | April 2026 | Gedetailleerd uitgewerkt plan: locatie inkomhal, PCB Eagle/JLCPCB, LED-strip 8px legende, ntfy.sh, Cloudflare Tunnel, EPEX ENTSO-E API, fasering 1-2-3 |
 | v0.4 | April 2026 | Sectie 16 herschreven: NVS-strategie stroombeveiligd (elke 15 min), twee GAS-tabbladen Data+Verbruik, capaciteitstarief meting en simulatie, SPIFFS dagarchief 20+ jaar, midnight GAS-trigger, /history pagina, volledige kolommen- en key-definitie |
 | v0.5 | April 2026 | Piek vermogen gesplitst in piek_won en piek_sch: aparte NVS-keys, JSON-keys pw/ps, GAS-kolommen, /history pagina, berekening via proportionele solar verdeling per huishouden |
-| v0.6 | April 2026 | Een aansluiting verduidelijkt (WON+SCH = 1 Fluvius-meter). Gecombineerde capaciteitspiek pt als basis echt tarief, individuele pieken pw/ps voor gedragsanalyse. Dubbel tariefvergelijk dynamisch vs. vast: parallel berekend, side-by-side in Sheets Verbruik en SPIFFS, UI-blok met dagverschil, contractkeuze-onderbouwing |
+| v0.6 | April 2026 | Een aansluiting verduidelijkt, gecombineerde capaciteitspiek pt, dubbel tariefvergelijk dynamisch/vast |
+| v0.7 | April 2026 | JSON-keys, GAS-kolommen en SPIFFS geconsolideerd: §11.4 = enige JSON-referentie, §9.1 = enige GAS-Data-referentie, §16.4 = enige Verbruik-referentie. Duplicaten verwijderd. |
