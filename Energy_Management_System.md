@@ -1,5 +1,5 @@
 # Energy Management System — Zarlardinge
-## Technisch werkdocument v0.2 — April 2026
+## Technisch werkdocument v0.3 — April 2026
 
 **ESP32-C6 · Arduino IDE · ESPAsyncWebServer · Matter · Google Sheets**
 *Filip Dworp (FiDel) — Zarlardinge (BE)*
@@ -9,7 +9,7 @@
 ## Instructies bij gebruik van dit document
 
 1. Upload dit document + eventuele sketch aan het begin van elke nieuwe sessie
-2. Vraag Claude het document samen te vatten vóór er iets aangepast wordt
+2. Vraag Claude het document samen te vatten voor er iets aangepast wordt
 3. Eerst een plan — Claude mag pas beginnen coderen na expliciete goedkeuring
 4. **Kritische regels voor alle Zarlar-controllers (ook Smart Energy):**
    - `#define Serial Serial0` bovenaan — verplicht voor ESP32-C6 RISC-V serieel
@@ -37,6 +37,7 @@ Alle controllers publiceren een `/json` endpoint. Het **Zarlar Dashboard (192.16
 [ROOM  192.168.0.80] --+
          |
          +--> Apple Home (via Matter/WiFi)
+         +--> Cloudflare Tunnel --> publieke URL (remote toegang)
 ```
 
 ### Bestaande controllers
@@ -55,7 +56,15 @@ Alle controllers publiceren een `/json` endpoint. Het **Zarlar Dashboard (192.16
 
 ## 2. Installatie — hardware overzicht
 
-### 2.1 Zonne-installatie
+### 2.1 Fysieke locatie controller
+
+De Smart Energy controller staat in de **inkomhal van Maarten**, naast de Telenet router:
+- WiFi optimaal (rechtstreeks naast router)
+- 2 meter UTP kabel naar de verdeelkast (diffs, automaten, S0-tellers)
+- Zichtbaar voor Maarten en Celine: LED-strip op het kastje
+- Voeding: 5V via eigen adaptor of USB-C van router
+
+### 2.2 Zonne-installatie
 
 | Component | Details |
 | --- | --- |
@@ -67,19 +76,19 @@ Alle controllers publiceren een `/json` endpoint. Het **Zarlar Dashboard (192.16
 | RID-codes | RHCD4F (SN ...465) & QX6NUA (SN ...851) |
 | Installateur / jaar | Alfisun, 2017 |
 | Omvormer 3 — westdak | SMA Sunny Boy — type & SN nog te noteren (AP1) |
-| Solar S0-teller | Digitale S0-pulsuitgang — in tellerkast keuken |
+| Solar S0-teller | Digitale S0-pulsuitgang — in verdeelkast |
 
-### 2.2 Meters & tellers
+### 2.3 Meters & tellers
 
 | Component | Details |
 | --- | --- |
 | Fluvius digitale meter | NEE — uitzondering tot eind 2028 |
 | Huidig metertype | Terugdraaiende teller — injectie vergoed aan aankoopprijs |
 | Overgang 2028 | Digitale meter verplicht. Injektietarief daalt naar ~0,05 EUR/kWh |
-| S0-tellers aanwezig | Solar, Verbruik WON, Verbruik SCH (evt. meer) |
+| S0-tellers aanwezig | Solar, Verbruik WON, Verbruik SCH |
 | Pulsen/kWh | Nog te lezen van label — typisch 1000 imp/kWh (AP2) |
 
-### 2.3 Stuurbare verbruikers
+### 2.4 Stuurbare verbruikers (toekomst fase 2+)
 
 | Verbruiker | Hardware | Stuurbaarheid | Prioriteit |
 | --- | --- | --- | --- |
@@ -91,14 +100,13 @@ Alle controllers publiceren een `/json` endpoint. Het **Zarlar Dashboard (192.16
 
 De regenwaterpomp is essentieel voor al het sanitair. Dit is een harde constraint die nooit mag wijzigen.
 
-### 2.4 Warmtepompen (Panasonic + CZ-TAW1)
+### 2.5 Warmtepompen (Panasonic + CZ-TAW1)
 
 | | WP SCH | WP WON |
 | --- | --- | --- |
 | In werking | Januari 2019 | November 2019 |
 | Comfort Cloud | OK — Filip als eigenaar | GEBLOKKEERD |
-| Probleem WP WON | --- | Registratie-email iTroniX adres (bedrijf gestopt 2022) bestaat niet meer |
-| Oplossing | --- | CZ-TAW1 resetten via paperclip, herregistreren op prive-mail Filip, Maarten toevoegen (AP10) |
+| Oplossing WP WON | --- | CZ-TAW1 resetten via paperclip, herregistreren op prive-mail Filip, Maarten toevoegen (AP10) |
 
 ---
 
@@ -106,19 +114,16 @@ De regenwaterpomp is essentieel voor al het sanitair. Dit is een harde constrain
 
 ### 3.1 Module & board
 
-Identiek aan alle andere Zarlar-controllers:
-
 | Parameter | Waarde |
 | --- | --- |
 | Module | ESP32-C6-WROOM-1N16 (Espressif) |
 | Flash | 16 MB |
 | Board | 32-pin clone (AliExpress batch dec 2025, EUR 2.52/stuk) |
 | WiFi | WiFi 6 (2.4 GHz), 3.3V IO niet 5V-tolerant |
-| Locatie | Tellerkast keuken SCH |
+| Shield | ESP32-C6 Zarlar shield (5V voeding via VIN + PTC 500mA) |
+| Locatie | Kastje inkomhal Maarten, naast Telenet router |
 | Vaste IP | 192.168.0.73 |
 | Naam netwerk | ESP32_SMART_ENERGY |
-
-Bij zwakke WiFi: gebruik ESP32-C6-WROOM-1U (zelfde module, U.FL/IPEX voor externe antenne).
 
 ### 3.2 Partitietabel (identiek voor alle Zarlar-controllers)
 
@@ -143,254 +148,292 @@ Nooit `huge_app` gebruiken — brak OTA. Nooit 4MB controller gebruiken.
 | IO0 | Boot pin — alleen als output of met sterke pull-up |
 | IO15 | Alleen als output |
 
-IO14 bestaat niet op het 32-pin devboard (wel in SoC datasheet maar niet uitgebroken).
-
-### 3.4 Voeding
-
-| Situatie | Voeding |
-| --- | --- |
-| Test | 5V via USB-C connector van het devboard |
-| Productie | 5V via VIN-pin, beveiligd met PTC-zekering 500 mA |
-
-### 3.5 Voorgestelde pinout Smart Energy
-
-| Pin | Functie | Opmerking |
-| --- | --- | --- |
-| IO3 | S0-puls Solar | Interrupt FALLING, pull-up + optocoupler |
-| IO4 | S0-puls Verbruik WON | Interrupt FALLING, pull-up + optocoupler |
-| IO5 | S0-puls Verbruik SCH | Interrupt FALLING, pull-up + optocoupler |
-| IO6 | S0-puls ECO-boiler (optioneel) | Interrupt FALLING |
-| IO1 | Relaisuitgang reserve | Optioneel |
-| IO8 | LEEG LATEN | Strapping pin |
-| IO9 | LEEG LATEN | Strapping pin |
-
-S0-aansluiting per kanaal:
-```
-S0+ --+-- 3.3V (via 10k pull-up)
-      +-- ESP32 GPIO (interrupt INPUT_PULLUP)
-S0- -- GND
-Optocoupler tussen S0-teller en ESP32 aanbevolen (galvanische scheiding).
-```
+IO14 bestaat niet op het 32-pin devboard (niet uitgebroken).
 
 ---
 
-## 4. Software & architectuur
+## 4. Interface PCB — S0 optocoupler board
 
-### 4.1 Arduino IDE instellingen
+### 4.1 Ontwerp & productie
 
-| Parameter | Waarde |
-| --- | --- |
-| Board | ESP32C6 Dev Module |
-| Flash Size | 16MB |
-| Partition Scheme | Custom (partitions_16mb.csv) |
-| Upload Speed | 921600 |
+- Ontwerpen in **Eagle (Autodesk)**
+- Bestellen via **JLCPCB** (5 stuks, ~EUR 5 inclusief verzending)
+- Formaat: ~4 x 5 cm, past in kastje voor de ESP32-C6 shield
+- Connector naar ESP32 shield via 3-polige header (GND + 3 GPIO-lijnen)
 
-### 4.2 Bibliotheken
+### 4.2 Aansluitkabel
 
-| Bibliotheek | Gebruik |
-| --- | --- |
-| ESPAsyncWebServer (Me-No-Dev) | Webserver, alle endpoints, chunked streaming |
-| AsyncTCP (Me-No-Dev) | Vereist door ESPAsyncWebServer |
-| Preferences (built-in) | NVS opslag voor instellingen |
-| SPIFFS (built-in) | debug.log rotatie bij >800KB |
-| HTTPClient (built-in) | HTTP calls naar ECO-controller en Tesla API |
-| WiFi / esp_wifi (built-in) | WiFi + power save UIT via esp_wifi_set_ps |
-| arduino-esp32-Matter | Matter endpoints |
+Afgeschermde UTP kabel (~2 m) van verdeelkast naar kastje inkomhal:
+- Pair 1: Solar S0+ / S0-
+- Pair 2: WON   S0+ / S0-
+- Pair 3: SCH   S0+ / S0-
+- Pair 4: reserve / scherm naar GND
 
-### 4.3 Sketch-structuur (verplichte elementen)
+### 4.3 Schema per S0-kanaal (PC817 optocoupler)
 
-```cpp
-// VERPLICHT voor ESP32-C6 RISC-V serieel
-#define Serial Serial0
+```
+  VERDEELKAST ZIJDE              KASTJE ZIJDE (ESP32)
+  (galvanisch gescheiden)
 
-// Versie
-#define VERSION "Smart Energy v0.1"
-
-// Pinnen S0-tellers
-#define S0_SOLAR_PIN  3
-#define S0_WON_PIN    4
-#define S0_SCH_PIN    5
-#define S0_ECO_PIN    6   // optioneel
-
-// S0 configuratie (te verifiëren van label, AP2)
-#define PULSEN_PER_KWH  1000
-#define WH_PER_PULS     (1000.0 / PULSEN_PER_KWH)
-
-// Netwerk
-#define MY_IP           "192.168.0.73"
-#define ECO_BOILER_IP   "192.168.0.71"
-#define ZARLAR_DASH_IP  "192.168.0.60"
-
-// Drempelwaarden (ook instelbaar via /settings + NVS)
-#define DREMPEL_OVERSCHOT_W   200  // Watt
-#define DREMPEL_DUUR_SEC       60  // seconden
-
-// Simulatiemodus — ALLEEN voor ontwikkeling zonder hardware
-bool SIMULATION_MODE = false;
+  S0+ --[330 Ohm]--+              3.3V
+                   |                |
+               PC817            [10k Ohm]
+               LED anode            |
+               LED kathode          +---> GPIO (INPUT_PULLUP)
+                   |                |
+  S0- ------------+            PC817 collector
+                               PC817 emitter
+                                    |
+                                   GND
 ```
 
-### 4.4 S0-pulsmeting — implementatieprincipe
+Puls van meter: S0+ naar S0- kort gesloten
+  -> LED PC817 licht op
+  -> Transistor geleidt
+  -> GPIO gaat naar LOW
+  -> ESP32 detecteert FALLING interrupt
+
+### 4.4 Componentenlijst PCB
+
+| Component | Waarde | Qty | Opmerking |
+| --- | --- | --- | --- |
+| PC817 | optocoupler DIP-4 | 3 | 1 per S0-kanaal |
+| R1, R3, R5 | 330 Ohm 1/4W | 3 | Serie met LED (meter-zijde) |
+| R2, R4, R6 | 10k Ohm 1/4W | 3 | Pull-up 3.3V (ESP32-zijde) |
+| LED1, LED2, LED3 | 3mm groen | 3 | Optioneel — visuele pulsbevestiging |
+| R7, R8, R9 | 1k Ohm 1/4W | 3 | Serie met optionele LED |
+| J1 | Schroefbornier 6-polig | 1 | S0+ S0- per kanaal (3 kanalen) |
+| J2 | Pinheader 3-polig | 1 | GND + GPIO3 + GPIO4 + GPIO5 naar shield |
+| J3 | Pinheader 2-polig | 1 | 3.3V + GND van shield |
+
+### 4.5 Pinout naar ESP32-C6
+
+| PCB pin | ESP32 GPIO | Functie |
+| --- | --- | --- |
+| OUT1 | IO3 | S0 Solar (interrupt FALLING) |
+| OUT2 | IO4 | S0 Verbruik WON (interrupt FALLING) |
+| OUT3 | IO5 | S0 Verbruik SCH (interrupt FALLING) |
+| GND | GND | Gemeenschappelijke massa |
+
+Eventueel 4e kanaal (IO6) voor ECO-boiler S0 — pad voorzien op PCB.
+
+### 4.6 Waarom geen I2C uitbreiding
+
+I2C voegt latentie toe en de ESP32 zou pulsen missen bij hoge pulsfrequentie
+(bijv. bij 1000 imp/kWh en 3 kW vermogen = 833 ms/puls, maar bij piekverbruik
+kan dit sneller). Directe GPIO-interrupts zijn de enige correcte aanpak voor S0.
+
+---
+
+## 5. LED-strip indicatie — 8 pixels WS2812B
+
+### 5.1 Plaatsing
+
+Verticale strip van **8 WS2812B LEDs** op de buitenkant van het kastje in de
+inkomhal van Maarten. Legende naast elke LED (labelstrip of gravure).
+Zichtbaar voor Maarten, Celine, Filip en Mireille.
+
+### 5.2 Bedrading
+
+| Aansluiting | Waarde |
+| --- | --- |
+| ESP32 GPIO | IO10 (of vrije pin, aan te passen) |
+| Voeding pixels | 5V (rechtstreeks van voeding, niet van ESP32 3.3V!) |
+| GND | Gemeenschappelijk met ESP32 |
+| Data | Via 330 Ohm serie-weerstand naar DIN WS2812B |
+| Ontkoppelcondensator | 100 uF 10V over 5V-GND aan begin strip |
+
+Bibliotheek: Adafruit NeoPixel of FastLED (al beschikbaar in Zarlar ecosystem).
+
+### 5.3 Kleurcode en legende (8 LEDs, van boven naar onder)
+
+| LED | Kleur | Betekenis | Actie voor gebruikers |
+| --- | --- | --- | --- |
+| 1 | Wit knipperend | Stroom GOEDKOOP nu (EPEX < 0,05 EUR/kWh) | Zet grote verbruikers aan |
+| 2 | Geel | EPEX prijs laag (0,05-0,15 EUR/kWh) | Goed moment voor wasmachine / vaatwas |
+| 3 | Groen | Solar overschot aanwezig | Verbruik zoveel je wil |
+| 4 | Groen knipperend | Groot solar overschot (> 1 kW) | Ideaal voor ECO-boiler / laden EV |
+| 5 | Blauw | Neutraal — normaal tarief | Normaal verbruik OK |
+| 6 | Oranje | EPEX prijs hoog (> 0,25 EUR/kWh) | Beperk groot verbruik |
+| 7 | Rood | EPEX prijs piek (> 0,40 EUR/kWh) | Stop grote verbruikers! |
+| 8 | Paars | Nacht / geen data | Geen actie nodig |
+
+Op elk moment brandt precies 1 LED — de LED die de huidige situatie het best beschrijft.
+Prioriteit van boven naar onder: goedkoopste situatie heeft voorrang.
+
+### 5.4 Intensiteit
+
+Laag (20-30%) overdag als achtergrond. Helder knipperend (100%) bij urgente actie.
+Dimbaar via /settings.
+
+---
+
+## 6. Remote toegang — Cloudflare Tunnel
+
+### 6.1 Concept
+
+De ESP32 opent zelf een veilige HTTPS-tunnel naar Cloudflare.
+Geen port-forwarding nodig op de Telenet router.
+Bereikbaar via een vaste URL zoals `smart-energy.zarlardinge.be` van overal ter wereld.
+
+Sluit aan bij de bestaande Cloudflare-infrastructuur van Filip
+(workers: `controllers-diagnose.filip-delannoy.workers.dev`).
+
+### 6.2 Implementatie op ESP32
+
+Cloudflare Tunnel (cloudflared) draait normaal als daemon op een server.
+Voor ESP32 is de aanpak anders: een **Cloudflare Worker als proxy**:
+
+```
+iPhone / Android (overal ter wereld)
+    |
+    v
+https://smart-energy.filip-delannoy.workers.dev  (Cloudflare Worker)
+    |
+    v
+http://192.168.0.73  (ESP32 thuis, lokaal netwerk)
+    |
+    v
+ESPAsyncWebServer response
+```
+
+De Worker stuurt de request door naar het lokale IP via een vaste tunnel.
+Authenticatie via een geheim token in de Worker (niet in de browser).
+
+Alternatief eenvoudiger: **Cloudflare Tunnel daemon op de Telenet router**
+(als die OpenWrt draait) of op een Raspberry Pi als die beschikbaar is.
+
+### 6.3 Wat bereikbaar is remote
+
+- `/` — hoofddashboard (read-only view, mobiel geoptimaliseerd)
+- `/json` — live data voor integratie
+- `/settings` — alleen via authenticatie (token in URL of header)
+
+---
+
+## 7. EPEX day-ahead prijsdata in de UI
+
+### 7.1 Databron
+
+ENTSO-E Transparency Platform: gratis, publiek, geen API-key nodig.
+
+```
+URL: https://web-api.tp.entsoe.eu/api
+Parameters:
+  documentType=A44 (day-ahead prices)
+  in_Domain=10YBE----------2 (Belgie)
+  out_Domain=10YBE----------2
+  periodStart=YYYYMMDD0000
+  periodEnd=YYYYMMDD2300
+  securityToken=<gratis aan te vragen>
+```
+
+De ESP32 haalt dagelijks om 14h30 de prijzen op voor de volgende dag (EPEX
+publiceert om ~13h). Data wordt opgeslagen in SPIFFS voor gebruik zonder WiFi.
+
+### 7.2 Weergave in de UI
+
+- Huidige prijs groot bovenaan in EUR/kWh, kleurgecodeerd
+- Balk- of lijndiagram van de komende 24 uur (Chart.js op /charts pagina)
+- Markering goedkoopste 4 uur (voor EV nachtladen)
+- Markering piekprijzen in rood
+- Advies: "Beste laadvenster EV: 02h-06h (gem. EUR 0,03/kWh)"
+
+### 7.3 Lokale opslag SPIFFS
+
+Prijsdata opslaan als JSON in SPIFFS (`/epex.json`):
+- Beschikbaar zonder WiFi
+- Gebruikt als basis voor LED-strip kleur en push-notificaties
+- Dagelijks overschreven bij succesvolle download
+
+---
+
+## 8. Push-notificaties — ntfy.sh
+
+### 8.1 Keuze: ntfy.sh
+
+Gratis, open-source, geen account vereist, eenvoudige HTTP POST vanuit ESP32.
+App beschikbaar voor iOS en Android.
+
+### 8.2 Werking
+
+```
+ESP32 --> HTTP POST --> https://ntfy.sh/zarlardinge-energy
+                            |
+                            v
+                    iPhone / Android app
+                    (geabonneerd op topic)
+```
+
+Het topic `zarlardinge-energy` is privaat (niemand anders weet de naam).
+Optioneel beveiligen met een zelfgekozen wachtwoord.
+
+### 8.3 Implementatie ESP32
 
 ```cpp
-volatile uint32_t cnt_solar = 0;
-volatile uint32_t cnt_won   = 0;
-volatile uint32_t cnt_sch   = 0;
-
-void IRAM_ATTR isr_solar() { cnt_solar++; }
-void IRAM_ATTR isr_won()   { cnt_won++;   }
-void IRAM_ATTR isr_sch()   { cnt_sch++;   }
-
-void setup() {
-  pinMode(S0_SOLAR_PIN, INPUT_PULLUP);
-  attachInterrupt(S0_SOLAR_PIN, isr_solar, FALLING);
-  // idem WON en SCH
+void sendNotification(const char* title, const char* message, const char* priority) {
+  HTTPClient http;
+  http.begin("https://ntfy.sh/zarlardinge-energy");
+  http.addHeader("Title", title);
+  http.addHeader("Priority", priority);  // "low", "default", "high", "urgent"
+  http.addHeader("Tags", "solar");       // emoji tag
+  http.POST(message);
+  http.end();
 }
 
-// Elke seconde in loop():
-// Sla cnt_* op, reset tellers
-// vermogen_W = pulsen_per_seconde * WH_PER_PULS * 3600.0
-// overschot_W = solar_W - won_W - sch_W
+// Voorbeelden:
+sendNotification("Gratis stroom!", "Solar overschot 2.3 kW - ideaal voor wasmachine", "default");
+sendNotification("EPEX piekprijs", "EUR 0,48/kWh nu - stop grote verbruikers", "high");
+sendNotification("Goedkope stroom vannacht", "Laad EV tussen 02h-05h (gem. EUR 0,02/kWh)", "low");
 ```
 
-### 4.5 HTTP REST communicatie
+### 8.4 Wanneer notificaties sturen (drempelwaarden instelbaar)
 
-Geen MQTT, geen cloud, geen Home Assistant.
-
-```
-Smart Energy (192.168.0.73)
-  --> HTTP GET/POST --> ECO-boiler (192.168.0.71)     [aan/uit]
-  --> HTTP PUT      --> Tesla Wallcharger [IP t.b.d.] [lader sturen]
-  --> Modbus TCP    --> Thuisbatterij [toekomst 2028]
-  --> /json output  --> Zarlar Dashboard (192.168.0.60) --> Google Sheets
-```
-
-ECO-boiler aansturen:
-```cpp
-HTTPClient http;
-http.begin("http://192.168.0.71/relay?state=1");  // inschakelen
-int code = http.GET();
-http.end();
-```
-
-Tesla Wallcharger Gen 3 API:
-```
-GET  http://[IP]/api/1/vitals  -> laadstroom, spanning, energie, status
-PUT  http://[IP]/api/1/status  -> laden in-/uitschakelen
-```
-Onofficieel — kan veranderen bij Tesla firmware-update.
-
-### 4.6 Sturingslogica
-
-```
-Elke seconde:
-  vermogen solar/won/sch berekenen uit pulsen
-  overschot_W = solar_W - won_W - sch_W
-
-Elke 60 seconden:
-  gemiddeld_overschot = mean(laatste 60 waarden)
-
-  ALS gemiddeld_overschot > DREMPEL_OVERSCHOT_W:
-    -> ECO-boiler AAN via HTTP 192.168.0.71 (prioriteit 1)
-    -> [fase 2] Tesla-lader AAN via REST API (prioriteit 2)
-    -> [fase 3] Batterij laden via Modbus (prioriteit 4)
-  ANDERS:
-    -> ECO-boiler UIT (enkel als wij hem inschakelden)
-    -> [fase 2] Tesla-lader beperken/stoppen
-
-EPEX day-ahead (fase 2):
-  Elke avond: prijzen volgende dag ophalen via ENTSO-E API
-  Prijs <= 0,00 EUR/kWh : batterij + ECO-boiler + EV maximaal laden
-  Prijs 0,00-0,10       : EV laden 's nachts
-  Prijs > 0,20          : batterij ontladen, grote verbruikers uit
-  Solar-overschot heeft altijd prioriteit boven day-ahead
-```
-
----
-
-## 5. UI-architectuur (Zarlar stijlgids — identiek aan ECO v1.23)
-
-### 5.1 CSS-kleurpalet
-
-```
-Header:       background #ffcc00, kleur zwart, vetgedrukt
-Sidebar:      background #336699, links wit, breedte 60px
-Groepstitels: background #336699, cursief-vet, wit
-Tabel labels: kleur #369, fontsize 13px
-Status AAN:   background #0a0, tekst wit
-Status UIT:   background #999, tekst wit
-Sim-banner:   background #c00, tekst wit (SIMULATION MODE)
-```
-
-### 5.2 Pagina-structuur
-
-| URL | Inhoud |
-| --- | --- |
-| `/` | Hoofddashboard: solar W, WON W, SCH W, overschot W, relaisstatus ECO + EV |
-| `/charts` | Historische grafieken Chart.js (aparte pagina, geheugen!) |
-| `/settings` | Drempelwaarden, day-ahead aan/uit, override, PT-sensortype |
-| `/json` | Compact JSON voor Zarlar Dashboard |
-| `/update` | OTA firmware-update |
-| `/log` | SPIFFS debug.log |
-| `/clear_log` | Log wissen |
-| `/restart` | Controller herstarten |
-
-### 5.3 /json endpoint — sleutelstructuur
-
-```json
-{
-  "a": 3450,   "b": 1200,   "c": 800,    "d": 1450,
-  "e": 1,      "f": 0,      "g": 0,
-  "h": 10450,  "i": 4200,   "j": 2800,
-  "ac": -65,   "ae": 48320
-}
-```
-
-| Key | Beschrijving | Eenheid |
+| Trigger | Bericht | Prioriteit |
 | --- | --- | --- |
-| a | Solar vermogen huidig | W |
-| b | Verbruik WON huidig | W |
-| c | Verbruik SCH huidig | W |
-| d | Overschot (a - b - c) | W |
-| e | ECO-boiler aan/uit | 0/1 |
-| f | Tesla lader aan/uit | 0/1 |
-| g | Override actief | 0/1 |
-| h | Solar dag cumulatief | Wh |
-| i | WON dag cumulatief | Wh |
-| j | SCH dag cumulatief | Wh |
-| ac | WiFi RSSI | dBm |
-| ae | Heap largest block | bytes |
+| Solar overschot > 1 kW gedurende 5 min | "Zonne-energie beschikbaar" | Laag |
+| EPEX prijs daalt onder 0,05 EUR/kWh | "Goedkope stroom nu" | Normaal |
+| EPEX prijs stijgt boven 0,35 EUR/kWh | "Dure stroom - vermijd verbruik" | Hoog |
+| Volgende dag goedkoop nachtvenster | "EV laden aanbevolen 02h-05h" | Laag (18h) |
+| Controller offline > 10 min | "Smart Energy onbereikbaar" | Urgent |
 
-Na definitieve keuze: GAS-script aanmaken + Zarlar Dashboard polling configureren.
-
-### 5.4 Logging SPIFFS
-
-```cpp
-// Rotatie bij >800KB (identiek ECO-boiler)
-logEvent(LOG_INFO,  "Solar: 3450W, Overschot: 1450W, ECO: AAN");
-logEvent(LOG_WARN,  "Tesla API onbereikbaar");
-logEvent(LOG_ERROR, "Heap < 25KB, crash-log geschreven");
-// Crash-log naar NVS bij largest_block < 25KB
-```
+Alle drempelwaarden instelbaar via /settings. Notificaties per type aan/uit te zetten.
 
 ---
 
-## 6. Matter-integratie (fase 2)
+## 9. Google Sheets logging
 
-```cpp
-#include <Matter.h>
-#include <MatterEndPoints/MatterOnOffPlugin.h>
+Identiek aan alle andere Zarlar-controllers:
+- Zarlar Dashboard (192.168.0.60) pollt /json elke 5 minuten
+- POST naar Google Apps Script (GAS) nieuw script aan te maken
+- Nieuw tabblad `S-ENERGY` in de Zarlar Google Sheet
 
-MatterOnOffPlugin matterOverride;  // Override solar-sturing via Apple Home
-// Pairing code ALTIJD tonen in webUI, niet alleen in Serial
-// MDNS.begin() weglaten (conflicteert met Matter mDNS)
-// Auto-recovery corrupt Matter NVS na Matter.begin()
-```
+### 9.1 Kolommen GAS script (A tot P)
+
+| Kolom | Key | Beschrijving |
+| --- | --- | --- |
+| A | --- | Tijdstip |
+| B | a | Solar vermogen W |
+| C | b | Verbruik WON W |
+| D | c | Verbruik SCH W |
+| E | d | Overschot W (a-b-c) |
+| F | h | Solar dag kWh |
+| G | i | WON dag kWh |
+| H | j | SCH dag kWh |
+| I | e | ECO-boiler aan/uit |
+| J | f | Tesla laden aan/uit |
+| K | g | Override actief |
+| L | n | EPEX prijs huidig EUR/kWh |
+| M | o | LED-strip status (0-7) |
+| N | p | Pushbericht verstuurd (0/1) |
+| O | ac | WiFi RSSI dBm |
+| P | ae | Heap largest block bytes |
 
 ---
 
-## 7. Zarlar Dashboard integratie
+## 10. Zarlar Dashboard integratie
 
-### 7.1 Matrix — nieuwe rij S-ENERGY
+### 10.1 Matrix rij S-ENERGY (rij 2)
 
 | Matrix rij | Label | Controller | IP |
 | --- | --- | --- | --- |
@@ -399,124 +442,715 @@ MatterOnOffPlugin matterOverride;  // Override solar-sturing via Apple Home
 | **2** | **S-ENERGY** | **Smart Energy** | **192.168.0.73** |
 | 3 | S-OUTSIDE | Buiten (gepland) | 192.168.0.72 |
 
-### 7.2 Kolomindeling rij 2 (S-ENERGY)
+### 10.2 Kolomindeling rij 2 (S-ENERGY)
 
 | Col | Key | Label | Kleur |
 | --- | --- | --- | --- |
 | 0 | --- | Status | Groen=online, rood=offline |
 | 1 | a | Solar W | Geel: helder=veel solar |
 | 2 | d | Overschot W | Groen=overschot, rood=tekort |
-| 3 | e | ECO-boiler | Oranje=aan, dim=uit |
-| 4 | f | Tesla laden | Groen=laden, dim=uit |
-| 5 | g | Override | Rood=override, dim=auto |
-| 6 | h | Solar dag Wh | Geel schaal |
-| 7-13 | --- | reserve | --- |
-| 14 | ae | Heap KB | Groen>35 / geel>25 / rood |
+| 3 | n | EPEX prijs | Groen=goedkoop, rood=duur |
+| 4 | e | ECO-boiler | Oranje=aan, dim=uit |
+| 5 | f | Tesla laden | Groen=laden, dim=uit |
+| 6 | g | Override | Rood=override, dim=auto |
+| 7 | o | LED-strip status | Kleur = huidige LED kleur |
+| 8-13 | --- | reserve | --- |
+| 14 | ae | Heap KB | Groen>35KB / geel / rood |
 | 15 | ac | RSSI | Groen>=-60 / oranje / rood |
 
-### 7.3 Google Apps Script
+---
 
-Nieuw script aanmaken analoog aan `ECO_GoogleScript.gs`.
-Kolommen A-M (13 velden: timestamp + 12 JSON-keys a t/m ae).
+## 11. Software architectuur — sketch opbouw
+
+### 11.1 Basis: ECO-boiler v1.23 als template
+
+De Smart Energy sketch vertrekt van `ESP32_C6_MATTER_ECO-boiler_22mar_2200.ino`
+en behoudt de volledige structuur:
+- ESPAsyncWebServer met chunked streaming
+- Matter integratie
+- SPIFFS logging + NVS crash-log
+- OTA via /update
+- UI-stijl (geel/marineblauw)
+
+Wat nieuw is ten opzichte van ECO-boiler:
+- 3x S0 interrupt-driven pulsmeting (ipv temperatuursensoren)
+- EPEX data ophalen en tonen
+- WS2812B LED-strip aansturen (8 pixels)
+- ntfy.sh push-notificaties
+- Cloudflare Worker integratie (remote toegang)
+- Uitgebreidere /charts pagina (vermogen + EPEX grafiek)
+
+### 11.2 Kritische defines (bovenaan sketch)
+
+```cpp
+#define Serial Serial0  // VERPLICHT ESP32-C6
+
+#define VERSION        "Smart Energy v0.1"
+#define HOSTNAME       "ESP32_SMART_ENERGY"
+#define MY_IP          "192.168.0.73"
+
+// S0 pinnen
+#define S0_SOLAR_PIN   3
+#define S0_WON_PIN     4
+#define S0_SCH_PIN     5
+
+// S0 configuratie (te lezen van label teller, AP2)
+#define PULSEN_PER_KWH 1000
+#define WH_PER_PULS    (1000.0 / PULSEN_PER_KWH)
+
+// LED strip
+#define LED_PIN        10
+#define LED_COUNT      8
+
+// Netwerk
+#define ECO_BOILER_IP  "192.168.0.71"
+#define ZARLAR_IP      "192.168.0.60"
+#define NTFY_TOPIC     "zarlardinge-energy"
+#define ENTSO_TOKEN    ""  // aan te vragen op transparency.entsoe.eu
+
+// Drempelwaarden (ook via /settings + NVS)
+#define DREMPEL_OVERSCHOT_W   200
+#define DREMPEL_GOEDKOOP      0.05  // EUR/kWh
+#define DREMPEL_DUUR          0.25  // EUR/kWh
+#define DREMPEL_PIEK          0.40  // EUR/kWh
+```
+
+### 11.3 Pagina-structuur
+
+| URL | Inhoud | Toegang |
+| --- | --- | --- |
+| `/` | Dashboard: solar/WON/SCH/overschot + EPEX prijs + LED status | Lokaal + remote |
+| `/charts` | Grafieken: vermogen 24h + EPEX prijscurve 24h | Lokaal + remote |
+| `/settings` | Drempelwaarden, EPEX, notificaties, LED-dimmer | Lokaal + token |
+| `/json` | Compact JSON voor Zarlar Dashboard | Lokaal + remote |
+| `/update` | OTA firmware-update | Lokaal enkel |
+| `/log` | SPIFFS debug.log | Lokaal enkel |
+| `/restart` | Controller herstarten | Lokaal enkel |
+
+### 11.4 JSON /json endpoint — keys
+
+| Key | Beschrijving | Eenheid |
+| --- | --- | --- |
+| a | Solar vermogen huidig | W |
+| b | Verbruik WON huidig | W |
+| c | Verbruik SCH huidig | W |
+| d | Overschot (a-b-c, negatief = tekort) | W |
+| e | ECO-boiler aan/uit (fase 2) | 0/1 |
+| f | Tesla laden aan/uit (fase 2) | 0/1 |
+| g | Override actief | 0/1 |
+| h | Solar dag cumulatief | Wh |
+| i | WON dag cumulatief | Wh |
+| j | SCH dag cumulatief | Wh |
+| n | EPEX prijs huidig kwartier | EUR/kWh x1000 (int) |
+| o | LED-strip actieve positie (0-7) | int |
+| p | Laatste push verstuurd (unix timestamp) | int |
+| ac | WiFi RSSI | dBm |
+| ae | Heap largest block | bytes |
+
+### 11.5 S0-pulsmeting principe
+
+```cpp
+volatile uint32_t cnt_solar = 0;
+volatile uint32_t cnt_won   = 0;
+volatile uint32_t cnt_sch   = 0;
+volatile uint32_t ts_solar  = 0;  // timestamp laatste puls (ms)
+volatile uint32_t ts_won    = 0;
+volatile uint32_t ts_sch    = 0;
+
+void IRAM_ATTR isr_solar() { cnt_solar++; ts_solar = millis(); }
+void IRAM_ATTR isr_won()   { cnt_won++;   ts_won   = millis(); }
+void IRAM_ATTR isr_sch()   { cnt_sch++;   ts_sch   = millis(); }
+
+// Elke seconde: vermogen berekenen uit pulsen
+// vermogen_W = cnt_per_sec * WH_PER_PULS * 3600.0
+// Als laatste puls > 30s geleden: vermogen = 0 (stilstand)
+```
 
 ---
 
-## 8. Energiedata referentiewaarden 2025
+## 12. Fasering — gefaseerd ontwikkelplan
 
-| Parameter | Waarde |
-| --- | --- |
-| Solar productie | 10.763 kWh/jaar |
-| Totaal verbruik | 18.762 kWh/jaar |
-| Netto netaankoop | 7.999 kWh/jaar |
-| Bruto injectie | ~6.996 kWh/jaar |
-| Bruto aankoop | ~14.995 kWh/jaar |
-| Jaarfactuur | EUR 2.643 (incl. prosumententarief EUR 556) |
-| Prosumententarief | EUR 556/jaar — verdwijnt bij digitale meter 2028 |
+### Fase 1 — Meten, leren en adviseren (nu te realiseren)
 
-Seizoensprofiel:
-- Mrt-Okt: structureel solar-overschot — ECO-boiler + EV sturing actief
-- Nov-Feb: tekort — sturing weinig zinvol
+Doel: een werkende "energiecoach" die meet en adviseert, maar nog niets automatisch stuurt.
+Dit laat Maarten, Celine, Filip en Mireille toe hun leefpatroon te begrijpen en aan te passen
+vóór de digitale meter verplicht wordt in 2028.
+
+| Stap | Taak | Afhankelijkheid |
+| --- | --- | --- |
+| 1.1 | Interface PCB ontwerpen in Eagle + bestellen JLCPCB | --- |
+| 1.2 | UTP kabel trekken van verdeelkast naar inkomhal | --- |
+| 1.3 | Sketch v0.1: S0-pulsmeting + vermogensberekening | ECO v1.23 als basis |
+| 1.4 | Sketch v0.1: UI dashboard solar/WON/SCH/overschot | 1.3 |
+| 1.5 | Sketch v0.1: /json endpoint + OTA + logging | 1.4 |
+| 1.6 | Zarlar Dashboard: polling 192.168.0.73 toevoegen | 1.5 |
+| 1.7 | GAS script aanmaken voor Smart Energy logging | 1.6 |
+| 1.8 | Sketch v0.2: EPEX data ophalen + UI grafiek | 1.4 |
+| 1.9 | Sketch v0.2: EPEX in JSON key n | 1.8 |
+| 1.10 | Sketch v0.3: LED-strip 8 pixels (WS2812B) | 1.8 |
+| 1.11 | Sketch v0.3: ntfy.sh push-notificaties | 1.8 |
+| 1.12 | Cloudflare Worker uitbreiden voor remote /json + UI | 1.5 |
+| 1.13 | Matrix rij S-ENERGY activeren in Dashboard | 1.6 |
+
+Volgorde van uitvoering: 1.1 en 1.2 kunnen parallel aan de sketch-ontwikkeling.
+Start met 1.3-1.5 (meten en loggen), daarna 1.8-1.11 (EPEX + LED + push).
+
+### Fase 2 — Adviseren + sturen (na ~6 maanden observatie)
+
+Doel: automatisch sturen op basis van bewezen patronen.
+
+- ECO-boiler automatisch bij solar overschot (HTTP REST naar 192.168.0.71)
+- Tesla Wallcharger solar overdag + EPEX nachtladen
+- Override-knoppen per verbruiker in UI en Apple Home (Matter)
+- Dagschema EPEX: goedkoopste vensters automatisch benutten
+
+### Fase 3 — Thuisbatterij + digitale meter (~2028)
+
+- Aankoop 10 kWh Huawei/BYD bij overgang digitale meter
+- Modbus TCP batterijsturing
+- Capaciteitstarief optimalisatie (piekafvlakking)
+- Volledige autonome energieoptimalisatie
 
 ---
 
-## 9. Openstaande actiepunten
+## 13. Systeemoverzicht volledig
+
+```
+[Zonnepanelen zuiddak + westdak]
+        |
+[SMA omvormers x3] -- Speedwire (fase 2)
+        |
+[S0-tellers in verdeelkast]
+  Solar / WON / SCH
+        |
+[UTP kabel ~2m afgeschermd]
+        |
+[Interface PCB -- optocouplers PC817]
+  3x galvanische scheiding
+        |
+[ESP32-C6 Shield -- kastje inkomhal Maarten -- 192.168.0.73]
+        |
+   +----+-------+--------+----------+----------+
+   |            |        |          |          |
+[LED strip]  [ntfy.sh] [/json]  [EPEX API]  [fase 2+]
+ 8x WS2812B   push      |       ENTSO-E      ECO-boiler
+ inkomhal    notif.     |       dag-voor-dag  Tesla
+                        |                    Batterij
+                        v
+              [Zarlar Dashboard 192.168.0.60]
+                        |
+                        v
+                 [Google Sheets]
+                 [Matrix rij 2: S-ENERGY]
+
+                        |
+              [Cloudflare Worker]
+                        |
+              [iPhone / Android]
+              [overal ter wereld]
+```
+
+---
+
+## 14. Openstaande actiepunten
 
 | # | Actie | Door wie | Status |
 | --- | --- | --- | --- |
 | AP1 | Westdak SMA omvormer 3: type + SN noteren | Maarten | Open |
 | AP2 | S0-tellers: pulsen/kWh lezen van label | Filip | Open |
+| AP3 | ENTSO-E API token aanvragen (gratis) | Filip | Open |
+| AP4 | ntfy.sh topic instellen op telefoons Filip + Maarten | Filip + Maarten | Open |
+| AP5 | Eagle PCB ontwerp interface board | Filip | Open |
 | AP6 | EV-lader 2: merk/type en stuurbaarheid | Maarten | Open |
-| AP8 | SMA Speedwire testen op lokaal netwerk | Filip | Open |
+| AP7 | UTP kabel trekken verdeelkast -> inkomhal | Filip + Maarten | Open |
+| AP8 | SMA Speedwire testen op lokaal netwerk (fase 2) | Filip | Open |
 | AP9 | Jaarbedrag Engie FLOW invullen | Maarten | Open |
 | AP10 | CZ-TAW1 WP WON resetten + herregistreren | Filip | Open |
+| AP11 | Cloudflare Worker uitbreiden voor remote UI | Filip | Open |
 
 Afgevinkt: ESP32-C6 16MB OK, WiFi tellerkast OK, ECO-boiler OEG ~2kW OK, geen HA OK.
 
 ---
 
-## 10. Fasering
+## 16. Energiekostenregistratie — NVS, Google Sheets & Capaciteitstarief
 
-### Fase 1 — Basissturing (nu starten)
+### 16.1 Concept en doelstelling
 
-1. S0-pulsmeting: interrupt-driven tellers solar + WON + SCH
-2. Vermogen- en overschotberekening real time
-3. Dashboard UI: solar/WON/SCH/overschot + statusbadges
-4. /json endpoint met compacte keys
-5. ECO-boiler sturen via HTTP REST 192.168.0.71
-6. Drempellogica instelbaar via /settings + NVS
-7. OTA via /update
-8. SPIFFS logging + crash-log NVS
-9. Zarlar Dashboard: polling 192.168.0.73 toevoegen
-10. Google Apps Script aanmaken voor Smart Energy data
+**Één aansluiting — twee huishoudens**
 
-### Fase 2 — EV & geavanceerde sturing
+WON en SCH vormen juridisch en technisch één gebouw met één Fluvius-netaansluiting
+en één elektriciteitsmeter. Na 2028 komt er één digitale meter voor de volledige
+aansluiting. Het capaciteitstarief geldt voor de gecombineerde piekafname.
 
-- Tesla Wallcharger integreren (solar overdag + override UI)
-- EPEX day-ahead API (nachtladen EV)
-- SMA Speedwire/Modbus TCP (optioneel, detail)
-- Matter-integratie (override via Apple Home)
-- Matrix-rij S-ENERGY activeren in Dashboard
+De S0-subtellers (WON, SCH, Solar) zijn interne meetpunten die de ESP32 gebruikt
+voor de kostenverdeling tussen Filip en Maarten. Dit is een afspraak tussen de
+bewoners — Fluvius en de energieleverancier zien alleen het totaal.
 
-### Fase 3 — Thuisbatterij (~2028)
+De controller registreert elke 15 minuten de werkelijke energiekost per huishouden
+onder twee tariefstelsels tegelijk. Samen met de vermogenpiek vormt dit de basis
+voor drie toepassingen:
 
-- Aankoop 10 kWh Huawei/BYD bij overgang digitale meter
-- Modbus TCP batterijsturing
-- Day-ahead arbitrage: laden goedkoop, ontladen duur
-- Capaciteitstarief: piekafvlakking
+1. **Kostenverdeling WON/SCH** — transparante en eerlijke verdeling van de energiekost
+2. **Tariefvergelijking** — vast contract vs. dynamisch EPEX, side-by-side, per maand
+3. **Batterij-investeringsanalyse** — simulatie van het capaciteitstarief en ROI-berekening
+
+Alle data overleeft stroomuitval (NVS), wordt lokaal gearchiveerd (SPIFFS) en
+gesynchroniseerd naar Google Sheets in twee tabbladen: continue meting en dagoverzicht.
 
 ---
 
-## 11. Systeemoverzicht
+### 16.2 Berekeningsmodel per kwartier (15 minuten)
 
+**Stap 1 — kWh per huishouden meten:**
 ```
-[Zonnepanelen zuiddak + westdak]
-        |
-[SMA omvormers SB3600TL-21 x2 + westdak x1]
-  Speedwire ingebouwd (fase 2)
-        |
-[S0-pulstellers]
-  Solar / WON / SCH / ECO-boiler
-        |
-        v
-[ESP32-C6 "Smart Energy" -- 192.168.0.73 -- Tellerkast keuken SCH]
-        |
-   +----+------------------+------------------+
-   v                       v                  v
-[ECO-boiler ctrl]   [Tesla Wallcharger]  [Batterij ~2028]
- 192.168.0.71        REST API lokaal      Modbus TCP
- HTTP REST           onofficieel          Huawei/BYD
-   |
-   +--> [Zarlar Dashboard 192.168.0.60]
-              |
-              v
-        [Google Sheets]
+solar_kWh = pulsen_solar_15min / PULSEN_PER_KWH
+won_kWh   = pulsen_won_15min   / PULSEN_PER_KWH
+sch_kWh   = pulsen_sch_15min   / PULSEN_PER_KWH
+```
+
+**Stap 2 — solar proportioneel verdelen (principe 1 projectdocument):**
+```
+totaal_verbr = won_kWh + sch_kWh
+
+IF totaal_verbr > 0:
+  solar_won = solar_kWh * (won_kWh / totaal_verbr)
+  solar_sch = solar_kWh * (sch_kWh / totaal_verbr)
+ELSE:
+  solar_won = solar_kWh / 2    // gelijke verdeling als niemand verbruikt
+  solar_sch = solar_kWh / 2
+```
+
+**Stap 3 — netto aankoop of injectie:**
+```
+netto_won = MAX(0, won_kWh - solar_won)     // kWh aangekocht voor WON
+netto_sch = MAX(0, sch_kWh - solar_sch)     // kWh aangekocht voor SCH
+netto_inj = MAX(0, solar_kWh - won_kWh - sch_kWh)  // kWh naar net gestuurd
+```
+
+**Stap 4 — kosten berekenen met EPEX-prijs:**
+```
+epex_prijs = kwartierprijs EUR/kWh uit ENTSO-E data
+
+kost_won  = netto_won * epex_prijs
+kost_sch  = netto_sch * epex_prijs
+sol_opbr  = netto_inj * inj_tarief
+  // inj_tarief nu (terugdr. teller): = epex_prijs (teller draait terug aan aankoopprijs)
+  // inj_tarief na 2028: ~0,05 EUR/kWh (instelbaar in /settings)
+```
+
+**Stap 5 — vermogenpiek bijhouden (capaciteitstarief):**
+```
+// Gecombineerde netto afname = basis voor het werkelijke capaciteitstarief
+afname_totaal_kw = MAX(0, won_kWh + sch_kWh - solar_kWh) / 0.25  // gem. kW
+
+IF afname_totaal_kw > piek_kw_totaal_maand:
+  piek_kw_totaal_maand = afname_totaal_kw
+  piek_ts_totaal_maand = huidig tijdstip
+
+// Individuele pieken: voor gedragsanalyse per huishouden (niet voor Fluvius-tarief)
+afname_won_kw = MAX(0, won_kWh - solar_won) / 0.25
+afname_sch_kw = MAX(0, sch_kWh - solar_sch) / 0.25
+
+IF afname_won_kw > piek_kw_won_maand: piek_kw_won_maand = afname_won_kw; piek_ts_won_maand = nu
+IF afname_sch_kw > piek_kw_sch_maand: piek_kw_sch_maand = afname_sch_kw; piek_ts_sch_maand = nu
+// Alle vier opslaan in NVS (zie 16.3)
+```
+
+**Stap 6 — dubbel tariefvergelijk (dynamisch vs. vast):**
+```
+vast_prijs = NVS-instelling "vast_tarief" (EUR/kWh, instelbaar via /settings)
+             Standaard: huidig Engie FLOW variabel tarief (bijv. 0,28 EUR/kWh)
+
+// Kost onder vast tarief (parallel aan dynamische berekening)
+kost_won_v  = netto_won * vast_prijs
+kost_sch_v  = netto_sch * vast_prijs
+sol_opbr_v  = netto_inj * vast_prijs   // terugdraaiende teller = zelfde prijs
+                                        // na 2028: inj_tarief_v apart instellen
+
+// Verschil per kwartier (positief = dynamisch duurder dan vast)
+diff_won  = kost_won  - kost_won_v
+diff_sch  = kost_sch  - kost_sch_v
+```
+
+**Dagcumulatieven bijhouden (dynamisch + vast parallel):**
+```
+// Dynamisch (EPEX)
+dag_kWh_solar   += solar_kWh
+dag_kWh_won     += won_kWh
+dag_kWh_sch     += sch_kWh
+dag_kWh_inj     += netto_inj
+dag_kost_won_d  += kost_won       // d = dynamisch
+dag_kost_sch_d  += kost_sch
+dag_sol_opbr_d  += sol_opbr
+dag_epex_sum    += epex_prijs     // voor daggemiddelde
+
+// Vast tarief (parallel)
+dag_kost_won_v  += kost_won_v     // v = vast
+dag_kost_sch_v  += kost_sch_v
+dag_sol_opbr_v  += sol_opbr_v
+
+dag_kwartieren  += 1
+```
+Reset dagcumulatieven elke dag om 00:00.
+
+---
+
+### 16.3 NVS — stroombeveiligde opslag
+
+NVS (Non-Volatile Storage) overleeft stroomuitval en herstart volledig transparant.
+
+**Schrijfstrategie:**
+- Elke 15 minuten: dagcumulatieven wegschrijven naar NVS
+- Enkel bij nieuwe maandpiek: vermogenpiek bijwerken in NVS
+- Bij midnight: volledig dagresultaat als "laatste dag" in NVS
+- Bij boot: NVS inlezen en doortellen alsof er niets gebeurd is
+
+**Maximaal dataverlies bij stroomuitval: 15 minuten** — aanvaardbaar.
+De lopende dag wordt correct afgemaakt zodra de stroom terugkomt.
+
+**NVS namespace: "senrg" (Smart Energy)**
+
+| NVS key | Type | Inhoud |
+| --- | --- | --- |
+| dag_kwh_sol | float | Solar dag kWh |
+| dag_kwh_won | float | WON bruto dag kWh |
+| dag_kwh_sch | float | SCH bruto dag kWh |
+| dag_kwh_inj | float | Injectie dag kWh |
+| dag_eur_won | float | WON dag kost EUR |
+| dag_eur_sch | float | SCH dag kost EUR |
+| dag_eur_inj | float | Solar opbrengst dag EUR |
+| dag_epex_sum | float | Som EPEX prijzen (voor gem.) |
+| dag_kwartieren | int | Aantal kwartieren geteld |
+| piek_kw_tot | float | Gecombineerde piek netto afname (basis capaciteitstarief) |
+| piek_ts_tot | uint32 | Timestamp gecombineerde piek |
+| piek_kw_won | float | Individuele piek WON (gedragsanalyse) |
+| piek_ts_won | uint32 | Timestamp WON-piek |
+| piek_kw_sch | float | Individuele piek SCH (gedragsanalyse) |
+| piek_ts_sch | uint32 | Timestamp SCH-piek |
+| piek_maand | int | Maandnummer van de pieken (1-12) |
+| vast_tarief | int | Vast contract prijs EUR/kWh x1000 (instelbaar) |
+| inj_tarief | int | Injectietarief dynamisch EUR/kWh x1000 |
+| inj_tarief_v | int | Injectietarief vast EUR/kWh x1000 |
+| last_dag_data | string | JSON van laatste volledige dag (backup) |
+| pulsen_kwh | int | Pulsen/kWh (geconfigureerd, AP2) |
+
+**Boot-herstel procedure:**
+```cpp
+void bootHerstel() {
+  // Lees NVS dagcumulatieven terug
+  dag_kwh_sol = prefs.getFloat("dag_kwh_sol", 0.0);
+  // ... alle andere keys
+  
+  // Controleer of het nog dezelfde dag is
+  if (huidigeDag() != prefs.getInt("huidige_dag", 0)) {
+    // Nieuwe dag: sla vorige dag op als 'last_dag_data' en reset
+    slaLaatsteDagOp();
+    resetDagCumulatieven();
+  }
+  // Anders: gewoon doortellen
+}
 ```
 
 ---
 
-## 12. Versiegeschiedenis
+### 16.4 Google Sheets — architectuur twee tabbladen
+
+#### Tabblad "Data" — continue 15-minuten logging
+
+Identiek aan alle andere Zarlar-controllers. Zarlar Dashboard pollt /json elke 5 minuten
+en schrijft een rij. Aanvulling voor Smart Energy: ook om de 15 minuten (bij kwartierwissel)
+een volledige rij met kostendata.
+
+**Kolommen tabblad "Data" (A tot W):**
+
+| Kol | Key | Beschrijving | Eenheid |
+| --- | --- | --- | --- |
+| A | --- | Tijdstip | datetime |
+| B | a | Solar vermogen | W |
+| C | b | Verbruik WON vermogen | W |
+| D | c | Verbruik SCH vermogen | W |
+| E | d | Overschot (a-b-c) | W |
+| F | h | Solar dag cumulatief | Wh |
+| G | i | WON dag cumulatief bruto | Wh |
+| H | j | SCH dag cumulatief bruto | Wh |
+| I | v | Injectie dag cumulatief | Wh |
+| J | q | Kost WON dag cumulatief | EUR/100 |
+| K | r | Kost SCH dag cumulatief | EUR/100 |
+| L | s | Solar opbrengst dag cumulatief | EUR/100 |
+| M | n | EPEX prijs huidig kwartier | EUR/kWh x1000 |
+| N | n2 | EPEX prijs volgend kwartier | EUR/kWh x1000 |
+| O | pk | Piek vermogen huidige maand | W |
+| P | e | ECO-boiler aan/uit | 0/1 |
+| Q | f | Tesla laden aan/uit | 0/1 |
+| R | g | Override actief | 0/1 |
+| S | o | LED-strip status | 0-7 |
+| T | --- | (reserve) | --- |
+| U | ac | WiFi RSSI | dBm |
+| V | ae | Heap largest block | bytes |
+| W | --- | Versie firmware | string |
+
+#### Tabblad "Verbruik" — dagelijkse samenvatting
+
+Elke nacht om 00:00 schrijft de GAS-trigger (of de ESP32 via een speciale /eod call)
+een dagsamenvattingsrij. Dit tabblad is het werkinstrument voor Filip en Maarten.
+
+**Kolommen tabblad "Verbruik" (A tot P):**
+
+| Kol | Beschrijving | Eenheid | Gebruik |
+| --- | --- | --- | --- |
+| A | Datum | DD/MM/YYYY | --- |
+| B | Solar productie | kWh | Seizoensanalyse |
+| C | WON verbruik bruto | kWh | Verbruiksevolutie |
+| D | SCH verbruik bruto | kWh | Verbruiksevolutie |
+| E | Solar aandeel WON | kWh | Gratis eigenverbruik WON |
+| F | Solar aandeel SCH | kWh | Gratis eigenverbruik SCH |
+| G | Injectie naar net | kWh | Batterijpotentieel |
+| H | Kost WON — dynamisch (EPEX) | EUR | Werkelijke kost bij dynamisch contract |
+| I | Kost WON — vast tarief | EUR | Vergelijkingsbasis vast contract |
+| J | Verschil WON (H-I) | EUR | Negatief = dynamisch goedkoper |
+| K | Kost SCH — dynamisch (EPEX) | EUR | Werkelijke kost bij dynamisch contract |
+| L | Kost SCH — vast tarief | EUR | Vergelijkingsbasis vast contract |
+| M | Verschil SCH (K-L) | EUR | Negatief = dynamisch goedkoper |
+| N | Solar opbrengst — dynamisch | EUR | Waarde injectie tegen EPEX-prijs |
+| O | Solar opbrengst — vast | EUR | Waarde injectie tegen vast tarief |
+| P | EPEX gem. dagprijs | EUR/kWh | Prijspatroon |
+| Q | Vast tarief gebruikt | EUR/kWh | Referentie (uit /settings) |
+| R | Piek gecombineerd (echt tarief) | kW | Basis capaciteitstarief Fluvius |
+| S | Piek tijdstip gecombineerd | HH:MM | Wanneer treedt de piek op |
+| T | Piek WON individueel | kW | Gedragsanalyse WON |
+| U | Piek SCH individueel | kW | Gedragsanalyse SCH |
+| V | Cap. tarief simulatie (R x EUR 47,48) | EUR/maand | Kostprijs als digitale meter actief was |
+
+**GAS berekent automatisch:**
+- Rij "Maandtotaal": SOM kolommen C-G, H-O; MAX kolommen R, T, U
+- Rij "Jaarttotaal" in december
+- Kolom J en M: highlight groen als dynamisch goedkoper, rood als duurder
+- Kolom V: capaciteitstarief simulatie op basis van maandpiek
+
+#### Hoe de midnight-write werkt
+
+Bij Zarlar wordt de GAS-trigger aangestuurd door polling van het Dashboard.
+Voor de dagelijks samenvatting zijn twee aanpakken mogelijk:
+
+**Aanpak A (aanbevolen):** ESP32 zet om 00:00 een speciale vlag in /json
+(bijv. key `eod=1` gedurende 5 minuten). GAS-script detecteert dit en schrijft
+de "Verbruik" rij op basis van de final-waarden in die /json response.
+
+**Aanpak B:** GAS time-based trigger om 00:05 (elke nacht) die de laatste
+waarden ophaalt uit de "Data" sheet en een dagsamenvattingsrij schrijft.
+
+Aanpak B is robuuster (geen timing-afhankelijkheid van ESP32) en eenvoudiger.
+
+---
+
+### 16.5 SPIFFS — lokale backup en off-grid werking
+
+SPIFFS bewaart dezelfde dagdata lokaal als het netwerk tijdelijk uitvalt.
+Bij herverbinding worden ontbrekende dagbestanden via /eod endpoint aangeboden.
+
+**Bestandsstructuur:**
+```
+/epex.json          -- EPEX prijsdata volgende 24h (dagelijks overschreven)
+/data/2026-04-09.json  -- dagresultaat per dag
+/data/2026-04-10.json
+...
+/debug.log          -- rolling log (<800KB)
+/debug.log.old
+```
+
+**Formaat dagbestand:**
+```json
+{
+  "date": "2026-04-09",
+  "solar_kwh": 28.14,
+  "won_kwh": 12.41,
+  "sch_kwh": 6.22,
+  "inj_kwh": 6.83,
+  "won_eur_d": 1.84,     // dynamisch (EPEX)
+  "sch_eur_d": 0.92,
+  "inj_eur_d": 0.34,
+  "won_eur_v": 2.11,     // vast tarief
+  "sch_eur_v": 1.06,
+  "inj_eur_v": 0.39,
+  "epex_gem": 0.148,
+  "vast_prijs": 0.280,   // geconfigureerd vast tarief die dag
+  "piek_kw_tot": 5.12,   // gecombineerde piek (echt capaciteitstarief)
+  "piek_ts_tot": "17:45",
+  "piek_kw_won": 3.24,   // individuele piek WON
+  "piek_ts_won": "17:45",
+  "piek_kw_sch": 2.18,   // individuele piek SCH
+  "piek_ts_sch": "18:00"
+}
+```
+
+SPIFFS ~4MB: bij ~500 bytes/dag past **meer dan 20 jaar** aan dagdata.
+Maand- en jaaroverzichten worden on-the-fly berekend uit de dagbestanden.
+
+**Nieuwe /history pagina in de UI:**
+- Tabel laatste 30 dagen (uit SPIFFS dagbestanden)
+- Maandtotalen (berekend uit dagbestanden)
+- Jaarkolom naast kolom voor kostenvergelijking WON vs SCH
+- Download als CSV knop
+
+---
+
+### 16.6 Capaciteitstarief — meting en simulatie
+
+Het capaciteitstarief (actief na 2028 met digitale meter, Vlaanderen) is gebaseerd op
+de hoogste gemiddelde 15-minuten afname van het net per maand, uitgedrukt in kW.
+
+Tarief 2025 (referentie): ~EUR 47,48/kW/jaar = ~EUR 3,96/kW/maand.
+Een maandpiek van 5 kW kost dus ~EUR 20/maand = EUR 240/jaar extra.
+
+**Één aansluiting — één capaciteitstarief:**
+WON en SCH hebben één gezamenlijke netaansluiting. Het Fluvius-capaciteitstarief
+is gebaseerd op de **gecombineerde** piekafname van de totale aansluiting.
+
+**Berekening gecombineerde netto afname (basis voor echt tarief):**
+```
+afname_totaal_kw = MAX(0, won_W + sch_W - solar_W) / 1000.0
+// Enkel wat netto van het net komt telt mee
+// Solar die direct verbruikt wordt telt niet mee
+```
+
+**Individuele pieken (gedragsanalyse, niet voor Fluvius-tarief):**
+```
+afname_won_kw = MAX(0, won_W - solar_won_W) / 1000.0
+afname_sch_kw = MAX(0, sch_W - solar_sch_W) / 1000.0
+// Helpt zien WIE de piek veroorzaakt (EV bij WON? ECO-boiler bij SCH?)
+```
+
+**Wat de /history pagina toont:**
+- Gecombineerde maandpiek per maand + gesimuleerd capaciteitstarief (piek_kw * EUR 47,48)
+- Individuele WON/SCH pieken voor gedragsanalyse: wie veroorzaakt de piek?
+- Potentiele besparing met een batterij die de gecombineerde piek afvlakt
+
+**Nut voor batterij-investeringsbeslissing:**
+Na 1 jaar data kunnen Filip en Maarten zien:
+- Op welke momenten de piek optreedt (typisch 17h-19h in winter)
+- Of een batterij die pieken beperkt tot bijv. 2,5 kW zinvol is
+- Bijkomende ROI van het capaciteitstarief bovenop de energiebesparing
+
+---
+
+### 16.7 Dubbel tariefvergelijk — dynamisch vs. vast
+
+**Doel:** aantonen of een dynamisch EPEX-contract financieel beter of slechter is dan
+een vast contract, op basis van jullie werkelijk verbruiksprofiel.
+
+**Configuratie in /settings:**
+```
+Vast tarief:  [0,280] EUR/kWh  (huidig Engie FLOW variabel excl. nettarieven)
+              Aanpasbaar per jaar om historische vergelijking te maken
+Inj. tarief dynamisch: [EPEX] (automatisch)
+Inj. tarief vast:      [0,280] EUR/kWh (terugdraaiende teller = zelfde prijs)
+                       Na 2028: ~0,050 EUR/kWh voor beide
+```
+
+**Weergave in UI hoofddashboard:**
+```
++------------------------------------------+
+| VANDAAG — TARIEFVERGELIJK                |
++--------------------+---------------------+
+| DYNAMISCH (EPEX)   | VAST (EUR 0,28/kWh) |
++--------------------+---------------------+
+| WON:  EUR 1,84     | WON:  EUR 2,11      |
+| SCH:  EUR 0,92     | SCH:  EUR 1,06      |
+| Inj.: EUR 0,34     | Inj.: EUR 0,39      |
+| TOTAAL: EUR 2,76   | TOTAAL: EUR 3,17    |
++--------------------+---------------------+
+| Dynamisch: EUR 0,41 GOEDKOPER vandaag   |
++------------------------------------------+
+```
+
+**Weergave in Google Sheets "Verbruik":**
+- Kolommen H/I naast elkaar (dynamisch/vast WON)
+- Kolom J = verschil, kleurgecodeerd: groen = dynamisch wint, rood = vast wint
+- Maandtotaalrij: hoeveel bespaard/verloren per maand met dynamisch contract
+- Na 1 jaar: duidelijk zichtbaar of omschakeling naar dynamisch contract loont
+
+**Waarde van deze meting:**
+- Zomers (veel solar + lage EPEX): dynamisch altijd beter
+- Winteravonden (hoge EPEX piek): dynamisch soms duurder
+- Gecombineerd effect over een jaar: de echte onderbouwing voor contractkeuze
+- Dit is ook de data voor de bespreking bij contractverlenging (Engie FLOW loopt
+  af na jaar 1, evaluatie gepland maart/april 2026 → Total Energies MY Confort)
+
+---
+
+### 16.8 Overzicht: wat gaat waar
+
+| Data | NVS | SPIFFS | Sheets "Data" | Sheets "Verbruik" |
+| --- | --- | --- | --- | --- |
+| Puls-tellers (lopende 15') | Elke 15 min | Nee | Nee | Nee |
+| Dagcumulatieven | Elke 15 min | Bij midnight | Ja (continu) | Ja (midnight) |
+| Maandpiek WON | Bij nieuwe piek | Via dagbestand | Ja (continu) | Ja (midnight) |
+| Maandpiek SCH | Bij nieuwe piek | Via dagbestand | Ja (continu) | Ja (midnight) |
+| EPEX prijsdata | Nee | /epex.json | Ja (per rij) | Gem. per dag |
+| Jaaroverzicht | Nee | Berekend | Via filter | Via GAS formule |
+| Firmware instellingen | Ja | Nee | Nee | Nee |
+
+---
+
+### 16.9 Nieuwe JSON-keys /json endpoint
+
+| Key | Beschrijving | Eenheid |
+| --- | --- | --- |
+| h | Solar dag kWh cumulatief | Wh |
+| i | WON dag kWh cumulatief bruto | Wh |
+| j | SCH dag kWh cumulatief bruto | Wh |
+| v | Injectie dag kWh cumulatief | Wh |
+| q | Kost WON dag — dynamisch (EPEX) | EUR x100 (int) |
+| qv | Kost WON dag — vast tarief | EUR x100 (int) |
+| r | Kost SCH dag — dynamisch (EPEX) | EUR x100 (int) |
+| rv | Kost SCH dag — vast tarief | EUR x100 (int) |
+| s | Solar opbrengst dag — dynamisch | EUR x100 (int) |
+| sv | Solar opbrengst dag — vast | EUR x100 (int) |
+| n | EPEX prijs huidig kwartier | EUR/kWh x1000 (int) |
+| n2 | EPEX prijs volgend kwartier | EUR/kWh x1000 (int) |
+| nv | Vast tarief geconfigureerd | EUR/kWh x1000 (int) |
+| pt | Piek gecombineerde netto afname (capaciteitstarief) | W (int) |
+| pw | Piek netto afname WON individueel | W (int) |
+| ps | Piek netto afname SCH individueel | W (int) |
+| eod | End-of-day vlag (00:00-00:05) | 0/1 |
+| ac | WiFi RSSI | dBm |
+| ae | Heap largest block | bytes |
+
+---
+
+### 16.10 Implementatievolgorde in de sketch
+
+```
+Sketch v0.1 (basis):
+  - S0 interrupts, vermogensberekening, UI, /json, OTA, logging
+
+Sketch v0.2 (EPEX + kosten):
+  - EPEX data ophalen, kwartierkostenberekening
+  - Dagcumulatieven met NVS backup (elke 15 min)
+  - Maandpiek vermogen (NVS)
+  - Nieuwe JSON-keys q, qv, r, rv, s, sv, v, n, n2, nv, pt, pw, ps, eod
+  - Vast tarief instelling in NVS + /settings
+  - Dubbel tariefvergelijk in UI hoofddashboard
+  - GAS Verbruik-tabblad: dynamisch/vast kolommen + verschilkolom
+  - /history pagina (SPIFFS dagbestanden)
+  - GAS-script "Data" tabblad uitbreiden
+  - GAS-script "Verbruik" tabblad aanmaken (midnight trigger)
+
+Sketch v0.3 (LED + push):
+  - LED-strip 8 pixels met EPEX+solar combinatielogica
+  - ntfy.sh notificaties met kostencontext
+```
+
+
+---
+
+## 15. Versiegeschiedenis
 
 | Versie | Datum | Inhoud |
 | --- | --- | --- |
 | v0.1 | April 2026 | Initieel document op basis van projectdocument v0.7 |
-| v0.2 | April 2026 | Geintegreerd met Zarlar Master Overnamedocument: IP 192.168.0.73, matrix rij S-ENERGY, GAS-script, pinout, S0-code, JSON-keys, fasering, alle Zarlar-regels opgenomen |
+| v0.2 | April 2026 | Geintegreerd met Zarlar Master Overnamedocument: IP 192.168.0.73, matrix, GAS-script, pinout, S0-code, JSON-keys, fasering |
+| v0.3 | April 2026 | Gedetailleerd uitgewerkt plan: locatie inkomhal, PCB Eagle/JLCPCB, LED-strip 8px legende, ntfy.sh, Cloudflare Tunnel, EPEX ENTSO-E API, fasering 1-2-3 |
+| v0.4 | April 2026 | Sectie 16 herschreven: NVS-strategie stroombeveiligd (elke 15 min), twee GAS-tabbladen Data+Verbruik, capaciteitstarief meting en simulatie, SPIFFS dagarchief 20+ jaar, midnight GAS-trigger, /history pagina, volledige kolommen- en key-definitie |
+| v0.5 | April 2026 | Piek vermogen gesplitst in piek_won en piek_sch: aparte NVS-keys, JSON-keys pw/ps, GAS-kolommen, /history pagina, berekening via proportionele solar verdeling per huishouden |
+| v0.6 | April 2026 | Een aansluiting verduidelijkt (WON+SCH = 1 Fluvius-meter). Gecombineerde capaciteitspiek pt als basis echt tarief, individuele pieken pw/ps voor gedragsanalyse. Dubbel tariefvergelijk dynamisch vs. vast: parallel berekend, side-by-side in Sheets Verbruik en SPIFFS, UI-blok met dagverschil, contractkeuze-onderbouwing |
