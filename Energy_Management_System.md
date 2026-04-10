@@ -1,5 +1,5 @@
 # Energy Management System — Zarlardinge
-## Technisch werkdocument v1.0 — April 2026
+## Technisch werkdocument v1.1 — April 2026
 
 **ESP32-C6 · Arduino IDE · ESPAsyncWebServer · Matter · Google Sheets**
 *Filip Dworp (FiDel) — Zarlardinge (BE)*
@@ -36,7 +36,6 @@ Alle controllers publiceren een `/json` endpoint. Het **Zarlar Dashboard (192.16
 [SENRG 192.168.0.73] --+--> Zarlar Dashboard 192.168.0.60 --> Google Sheets
 [ROOM  192.168.0.80] --+
          |
-         +--> Apple Home (via Matter/WiFi)
          +--> Cloudflare Tunnel --> publieke URL (remote toegang)
 ```
 
@@ -46,7 +45,7 @@ Alle controllers publiceren een `/json` endpoint. Het **Zarlar Dashboard (192.16
 | --- | --- | --- | --- | --- |
 | HVAC | ESP32_HVAC | 192.168.0.70 | v1.19 | Productie stabiel |
 | ECO Boiler | ESP32_ECO Boiler | 192.168.0.71 | v1.23 | Productie stabiel |
-| **Smart Energy** | **ESP32_SMART_ENERGY** | **192.168.0.73** | **v0.1** | Te bouwen |
+| **Smart Energy** | **ESP32_SMART_ENERGY** | **192.168.0.73** | **v0.0** | Te bouwen |
 | ROOM Eetplaats | ESP32_EETPLAATS | 192.168.0.80 | v2.10 | Productie stabiel |
 | Zarlar Dashboard | ESP32_ZARLAR | 192.168.0.60 | v5.0 | Productie stabiel |
 
@@ -70,9 +69,9 @@ De Smart Energy controller staat in de **inkomhal van Maarten**, naast de Telene
 
 | Parameter | Waarde |
 | --- | --- |
-| Installateur / jaar | Alfisun, 2017 |
+| Installateur / jaar | ALFASUN, 2017 |
 | Totaal geinstalleerd vermogen | **12.100 Wp** (44 panelen x 275 Wp) |
-| Totaal omvormersvermogen | **9.700 W** (7.200 + 2.500 W) |
+| Totaal omvormersvermogen | **10.880 W** (7.200 + 3.680 W) |
 | Jaaropbrengst (gemiddeld 10 jaar) | ~11.950 kWh/jaar |
 | Solar S0-teller | Digitale teller met S0-pulsuitgang — in verdeelkast |
 
@@ -97,11 +96,12 @@ De Smart Energy controller staat in de **inkomhal van Maarten**, naast de Telene
 | --- | --- |
 | Panelen | **12x Viessmann Vitovolt 300, 275 Wp** (polycrystallijn, 60 cellen) |
 | String vermogen | 12 x 275 Wp = **3.300 Wp** |
-| Omvormer 3 | SMA Sunny Boy **SB2.5-1VL-40** |
+| Omvormer 3 | SMA Sunny Boy **SB3.6-1AV-41** |
 | Serienummer | Nog te noteren van typeplaatje (AP1) |
-| Communicatie | Speedwire/Webconnect + **WiFi** ingebouwd |
-| Omvormersvermogen | **2.500 W** |
-| Bezettingsgraad | 3.300 / 2.500 = 1,32 (acceptabel voor westorientatie) |
+| Communicatie | WLAN + Ethernet + RS485 — **Modbus (SMA + SunSpec) + Webconnect** |
+| Omvormersvermogen | **3.680 W** |
+| MPP-ingangen | **2 onafhankelijke MPP-ingangen** (ingang A + ingang B) |
+| Bezettingsgraad | 3.300 / 3.680 = 0,90 (onderbezet — conservatief voor westorientatie) |
 
 **Panelen — Viessmann Vitovolt 300, 275 Wp (2017):**
 
@@ -129,56 +129,26 @@ De Smart Energy controller staat in de **inkomhal van Maarten**, naast de Telene
 | Communicatie | Speedwire + Webconnect ingebouwd |
 | Beschermingsklasse | IP65 |
 
-**SMA SB2.5-1VL-40 — specs:**
+**SMA SB3.6-1AV-41 — specs (westdak):**
 
 | Parameter | Waarde |
 | --- | --- |
-| Max. AC-vermogen | 2.500 W |
-| Max. efficientie | 97,2% |
-| Europese efficientie | 96,7% |
-| Ingangsspanning bereik | 80-600 V DC |
-| MPP-bereik | 260-500 V |
-| Aantal MPPT | 1 |
+| Max. AC-vermogen | 3.680 W |
+| Max. efficiëntie / Europese eff. | 97,0% / 96,5% |
+| Max. DC-ingangsvermogen | 5.500 Wp |
+| Ingangsspanning bereik | 100-600 V DC |
+| MPP-bereik | 130-500 V |
+| Aantal MPPT / strings | **2 onafhankelijk** / A:2 + B:2 |
+| Max. ingangsstroom per MPPT | 15 A |
 | AC-aansluiting | 1-fase, 230 V / 50 Hz |
-| Communicatie | Speedwire + Webconnect + **WiFi ingebouwd** |
+| Communicatie | **WLAN + Ethernet + RS485** |
+| Protocollen | **Modbus (SMA + SunSpec), Webconnect, SMA Data** |
 | Beschermingsklasse | IP65 |
-| Gewicht | 9,2 kg |
-### 2.3 Meters & tellers
+| Gewicht | 17,5 kg |
 
-| Component | Details |
-| --- | --- |
-| Fluvius digitale meter | NEE — uitzondering tot eind 2028 |
-| Huidig metertype | Terugdraaiende teller — injectie vergoed aan aankoopprijs |
-| Overgang 2028 | Digitale meter verplicht. Injektietarief daalt naar ~0,05 EUR/kWh |
-| S0-tellers aanwezig | Solar, Verbruik WON, Verbruik SCH |
-| Pulsen/kWh | Nog te lezen van label — typisch 1000 imp/kWh (AP2) |
-
-### 2.4 Stuurbare verbruikers (toekomst fase 2+)
-
-| Verbruiker | Hardware | Stuurbaarheid | Prioriteit |
-| --- | --- | --- | --- |
-| ECO-boiler (SCH) | OEG dompelweerstand ~2 kW | HTTP REST naar 192.168.0.71 | 1 hoogste |
-| EV-lader 1 (WON) | Tesla Wallcharger Gen 3 | Lokale REST API HTTP PUT | 2 |
-| EV-lader 2 (WON) | Merk/type onbekend (AP6) | Nog te bepalen | 3 |
-| Thuisbatterij | Huawei/BYD voorkeur ~2028 | Modbus TCP | 4 |
-| WP WON (Panasonic) | Warmtepomp woning, CZ-TAW1 module | Comfort Cloud API of smart relay (fase 2+) | 5 |
-| WP SCH (Panasonic) | Warmtepomp schuur, CZ-TAW1 module | Comfort Cloud API of smart relay (fase 2+) | 5 |
-| **Regenwaterpomp** | Op WON-teller ~500 kWh/j | **NOOIT STUREN** | --- |
-
-De regenwaterpomp is essentieel voor al het sanitair. Dit is een harde constraint die nooit mag wijzigen.
-
-> Warmtepompen zijn grote verbruikers (~1,5–3 kW) die zinvol zijn om te sturen bij solar-overschot
-> of goedkope EPEX-prijzen. Via de CZ-TAW1 module en Panasonic Comfort Cloud API of via een
-> smart relay op de stuurlijn. Eerst AP10 oplossen (WP WON herregistratie) voor sturing mogelijk is.
-
-### 2.5 Warmtepompen (Panasonic + CZ-TAW1)
-
-| | WP SCH | WP WON |
-| --- | --- | --- |
-| In werking | Januari 2019 | November 2019 |
-| Comfort Cloud | OK — Filip als eigenaar | GEBLOKKEERD |
-| Oplossing WP WON | --- | CZ-TAW1 resetten via paperclip, herregistreren op prive-mail Filip, Maarten toevoegen (AP10) |
-
+> De SB3.6-1AV-41 biedt ruimere ESP32-integratiemogelijkheden dan de SB3600TL-21:
+> WLAN, Ethernet en RS485 zijn beschikbaar naast Speedwire.
+> SunSpec Modbus-protocol is breed compatibel met ESP32 Modbus-bibliotheken.
 ---
 
 ## 3. Hardware Smart Energy controller
@@ -198,7 +168,7 @@ De regenwaterpomp is essentieel voor al het sanitair. Dit is een harde constrain
 
 ### 3.2 Partitietabel (identiek voor alle Zarlar-controllers)
 
-Bestand `partitions_16mb.csv` naast het `.ino` bestand plaatsen:
+Bestand **`partitions_16mb.csv`** naast het `.ino` bestand plaatsen (exacte naam vereist door Arduino IDE — anders werkt Custom partition scheme niet):
 
 | Naam | Type | Offset | Grootte |
 | --- | --- | --- | --- |
@@ -829,7 +799,7 @@ Doel: automatisch sturen op basis van bewezen patronen.
 
 - ECO-boiler automatisch bij solar overschot (HTTP REST naar 192.168.0.71)
 - Tesla Wallcharger solar overdag + EPEX nachtladen
-- Override-knoppen per verbruiker in UI en Apple Home (Matter)
+- Override-knoppen per verbruiker in UI
 - Dagschema EPEX: goedkoopste vensters automatisch benutten
 
 ### Fase 3 — Thuisbatterij + digitale meter (~2028)
@@ -1343,4 +1313,5 @@ Sketch v0.3 (LED + push):
 | v0.7 | April 2026 | JSON-keys, GAS-kolommen en SPIFFS geconsolideerd: §11.4 = enige JSON-referentie, §9.1 = enige GAS-Data-referentie. Duplicaten verwijderd. |
 | v0.8 | April 2026 | (zie v0.9) |
 | v0.9 | April 2026 | Schema S0-interface gecorrigeerd: voeding LED-zijde van 3.3V ESP32-kant, niet van teller. |
-| v1.0 | April 2026 | S0-schema volledig herschreven naar Aanpak A (directe verbinding, geen optocoupler): onderbouwd via IEC 62053-31 interne isolatie. Componentenlijst aangepast (geen EL817S, wel 10nF HF-filter). Zonne-installatie volledig uitgewerkt: 32+12 panelen Viessmann Vitovolt 300 275Wp, SB3600TL-21 specs, SB2.5-1VL-40 specs, vermogensbalans, bezettingsgraad. AP2b en AP2c toegevoegd. | WP WON/SCH toegevoegd aan stuurbare verbruikers. PCB: 4 kanalen SMD EL817S SOP-4, 40x40mm 2x2 paneel JLCPCB. Verbinding via RJ45 (Roomsense/Option shield). LED-strip: alle 8 permanent, elk eigen aspect (solar/balans/EPEX nu+straks/ECO/EV/advies/systeem). Push 3 niveaus configureerbaar, standaard enkel URGENT. UI: visuele banner prioriteit boven push. Matrix rij 2 spiegelt LED-aspecten. |
+| v1.0 | April 2026 | S0-schema herschreven naar Aanpak A (IEC 62053-31), SMA SB3.6-1AV-41 westdak specs, Viessmann 275Wp installatie volledig uitgewerkt. |
+| v1.1 | April 2026 | Correcties: partitions_16mb.csv exacte naam, sketch v0.0 (nog te schrijven), Matter niet actief, ALFASUN spelling, WP types uit factuur Frigro 430955 (WH-UX09HE5 + WH-SXC09H3E5), westdak = SB3.6-1AV-41 (niet SB2.5-1VL-40) — totaal omvormersvermogen 10.880W. (directe verbinding, geen optocoupler): onderbouwd via IEC 62053-31 interne isolatie. Componentenlijst aangepast (geen EL817S, wel 10nF HF-filter). Zonne-installatie volledig uitgewerkt: 32+12 panelen Viessmann Vitovolt 300 275Wp, SB3600TL-21 specs, SB2.5-1VL-40 specs, vermogensbalans, bezettingsgraad. AP2b en AP2c toegevoegd. | WP WON/SCH toegevoegd aan stuurbare verbruikers. PCB: 4 kanalen SMD EL817S SOP-4, 40x40mm 2x2 paneel JLCPCB. Verbinding via RJ45 (Roomsense/Option shield). LED-strip: alle 8 permanent, elk eigen aspect (solar/balans/EPEX nu+straks/ECO/EV/advies/systeem). Push 3 niveaus configureerbaar, standaard enkel URGENT. UI: visuele banner prioriteit boven push. Matrix rij 2 spiegelt LED-aspecten. |
