@@ -1,5 +1,5 @@
 # Energy Management System — Zarlardinge
-## Technisch werkdocument v0.7 — April 2026
+## Technisch werkdocument v1.0 — April 2026
 
 **ESP32-C6 · Arduino IDE · ESPAsyncWebServer · Matter · Google Sheets**
 *Filip Dworp (FiDel) — Zarlardinge (BE)*
@@ -66,18 +66,83 @@ De Smart Energy controller staat in de **inkomhal van Maarten**, naast de Telene
 
 ### 2.2 Zonne-installatie
 
+**Systeemoverzicht:**
+
+| Parameter | Waarde |
+| --- | --- |
+| Installateur / jaar | Alfisun, 2017 |
+| Totaal geinstalleerd vermogen | **12.100 Wp** (44 panelen x 275 Wp) |
+| Totaal omvormersvermogen | **9.700 W** (7.200 + 2.500 W) |
+| Jaaropbrengst (gemiddeld 10 jaar) | ~11.950 kWh/jaar |
+| Solar S0-teller | Digitale teller met S0-pulsuitgang — in verdeelkast |
+
+**Zuiddak — string 1 & 2:**
+
 | Component | Details |
 | --- | --- |
-| Jaaropbrengst (gemiddeld) | ~11.950 kWh/jaar |
-| Omvormer 1 & 2 — zuiddak | SMA Sunny Boy SB3600TL-21 |
-| Serienummers | 2130419465 & 2130419851 |
+| Panelen | **32x Viessmann Vitovolt 300, 275 Wp** (polycrystallijn, 60 cellen) |
+| String vermogen | 32 x 275 Wp = **8.800 Wp** |
+| Omvormer 1 | SMA Sunny Boy **SB3600TL-21** |
+| Omvormer 2 | SMA Sunny Boy **SB3600TL-21** |
+| Serienummers | SN 2130419465 & SN 2130419851 |
 | Instellingscode / norm | BES204 / C10/11:2012 |
-| Communicatie | Speedwire/Webconnect ingebouwd — geen extra hardware nodig |
+| Communicatie | Speedwire/Webconnect ingebouwd — geen extra hardware |
 | RID-codes | RHCD4F (SN ...465) & QX6NUA (SN ...851) |
-| Installateur / jaar | Alfisun, 2017 |
-| Omvormer 3 — westdak | SMA Sunny Boy — type & SN nog te noteren (AP1) |
-| Solar S0-teller | Digitale S0-pulsuitgang — in verdeelkast |
+| Omvormersvermogen | 2 x 3.600 W = **7.200 W** |
+| Bezettingsgraad | 8.800 / 7.200 = 1,22 (normaal voor Belgisch klimaat) |
 
+**Westdak — string 3:**
+
+| Component | Details |
+| --- | --- |
+| Panelen | **12x Viessmann Vitovolt 300, 275 Wp** (polycrystallijn, 60 cellen) |
+| String vermogen | 12 x 275 Wp = **3.300 Wp** |
+| Omvormer 3 | SMA Sunny Boy **SB2.5-1VL-40** |
+| Serienummer | Nog te noteren van typeplaatje (AP1) |
+| Communicatie | Speedwire/Webconnect + **WiFi** ingebouwd |
+| Omvormersvermogen | **2.500 W** |
+| Bezettingsgraad | 3.300 / 2.500 = 1,32 (acceptabel voor westorientatie) |
+
+**Panelen — Viessmann Vitovolt 300, 275 Wp (2017):**
+
+| Parameter | Waarde |
+| --- | --- |
+| Type | Vitovolt 300, polycrystallijn, 60 cellen |
+| Typeplaatje code | Nog te lezen van paneel of installatiedossier (AP2b) |
+| Piek vermogen STC | 275 Wp |
+| Module-efficientie | ~17% (typisch 60-cel poly 2017) |
+| Temperatuurcoefficient Pmax | -0,41 %/K (typisch polycrystallijn) |
+| Garantie product | 10 jaar (Viessmann standaard) |
+| Garantie opbrengst | 25 jaar lineair, min. 80% |
+
+**SMA SB3600TL-21 — specs:**
+
+| Parameter | Waarde |
+| --- | --- |
+| Max. AC-vermogen | 3.680 W |
+| Max. efficientie | 97,6% |
+| Europese efficientie | 97,2% |
+| Ingangsspanning bereik | 125-600 V DC |
+| MPP-bereik | 188-500 V |
+| Aantal MPPT | 1 |
+| AC-aansluiting | 1-fase, 230 V / 50 Hz |
+| Communicatie | Speedwire + Webconnect ingebouwd |
+| Beschermingsklasse | IP65 |
+
+**SMA SB2.5-1VL-40 — specs:**
+
+| Parameter | Waarde |
+| --- | --- |
+| Max. AC-vermogen | 2.500 W |
+| Max. efficientie | 97,2% |
+| Europese efficientie | 96,7% |
+| Ingangsspanning bereik | 80-600 V DC |
+| MPP-bereik | 260-500 V |
+| Aantal MPPT | 1 |
+| AC-aansluiting | 1-fase, 230 V / 50 Hz |
+| Communicatie | Speedwire + Webconnect + **WiFi ingebouwd** |
+| Beschermingsklasse | IP65 |
+| Gewicht | 9,2 kg |
 ### 2.3 Meters & tellers
 
 | Component | Details |
@@ -175,58 +240,76 @@ Afgeschermde UTP kabel (~2 m) van verdeelkast naar kastje inkomhal:
 - Pair 3: SCH   S0+ / S0-
 - Pair 4: reserve / scherm naar GND
 
-### 4.3 Schema per S0-kanaal — SMD ontwerp, 4 kanalen
+### 4.3 S0-interface circuit — Aanpak A (directe verbinding)
+
+**Waarom geen optocoupler nodig:**
+
+De S0-uitgang van een energieteller is **intern al volledig geïsoleerd** van de
+230V netspanning, verplicht conform IEC 62053-31. Het contact is een spanningsloos
+reed-relais of open-collector transistor — geen enkel onderdeel van de 230V
+installatie is bereikbaar via de S0-klemmen. Over een afgeschermde kabel van 2m
+is directe verbinding met de ESP32 volkomen veilig.
+
+Optocouplers zijn zinvol bij lange kabels (>10m), industriële omgevingen met sterke
+EMC-storingen, of wanneer de S0-bron een actieve spanning heeft. Geen van deze
+condities is van toepassing in onze installatie.
+
+**Schema per S0-kanaal (4× identiek):**
+
+```
+  ESP32-SHIELD ZIJDE                    TELLER ZIJDE
+
+  3.3V
+    |
+  [R1 10kΩ 0805]  ←── pull-up
+    |
+    +────────────────────────── S0+ klem (teller)
+    |                           S0- klem (teller) ──── GND
+    |
+  [C1 10nF 0805]  ←── HF-filter (vermijdt valse pulsen door storingen)
+    |
+   GND
+
+  Middenknoop (tussen R1 en S0+) → GPIO (INPUT, geen interne pull-up nodig)
+```
+
+**Werking:**
+```
+Rust (S0 open):    3.3V → R1 → GPIO → HIGH  (pull-up houdt GPIO hoog)
+Puls (S0 sluit):   3.3V → R1 → S0+ → contact → S0- → GND
+                   GPIO zakt naar LOW → ESP32 detecteert FALLING interrupt
+```
 
 **PCB-specificaties:**
 - Afmeting per bordje: **40 × 40 mm**
 - Panelisatie: **2×2 tiles op 100×100 mm** met V-score snijlijnen
 - Bestelling JLCPCB: 5 panels = **20 bordjes** voor ±€5
-- Componenten: **SMD** (0805 weerstanden, SOP-4 optocouplers)
+- Componenten: volledig **SMD** (0805)
 - Connector naar ESP32 shield: **RJ45 female** (zie §4.5)
-- S0-ingangen: **4× 2-polige schroefbornier** (5mm raster)
+- S0-ingangen: **4× 2-polige schroefbornier** (3,5mm raster, SMD)
 
-**Schema per S0-kanaal (4× identiek op het bordje):**
-
-```
-  TELLER ZIJDE (galvanisch vrij)    ESP32 SHIELD ZIJDE (3.3V)
-
-  S0+ --[R 330Ω 0805]--+            3.3V (van RJ45 pin 2)
-                        |               |
-                     EL817S         [R 10kΩ 0805]
-                     (SOP-4)            |
-                     anode              +---> RJ45 data pin --> GPIO INPUT_PULLUP
-                     kathode            |
-                        |            EL817S collector
-  S0- ─────────────────+            EL817S emitter
-                                        |
-                                       GND (van RJ45 pin 1)
-```
-
-Puls van teller: S0+ – S0− kort gesloten
-→ LED EL817S licht op → transistor geleidt → GPIO naar LOW → ESP32 FALLING interrupt
-
-**SMD component keuze:**
-- Optocoupler: **EL817S** (SOP-4) — drop-in SMD equivalent van PC817
-- Weerstanden: **0805** formaat — makkelijk handmatig te solderen
-- Alle componenten beschikbaar bij LCSC (JLCPCB's component library voor PCBA)
+> ⚠️ Actiepunt: controleer of de S0-uitgang van onze specifieke meetmodules
+> passief (droog contact) of actief (met spanning) is — zie AP2c.
 
 ### 4.4 Componentenlijst PCB (SMD, 4 kanalen, 40×40mm)
 
-| Ref | Component | Waarde / Type | Footprint | Qty | Opmerking |
-| --- | --- | --- | --- | --- | --- |
-| U1–U4 | Optocoupler | EL817S | SOP-4 | 4 | 1 per S0-kanaal, LCSC: C6578 |
-| R1,R3,R5,R7 | Weerstand | 330 Ω | 0805 | 4 | Serie LED meter-zijde |
-| R2,R4,R6,R8 | Weerstand | 10 kΩ | 0805 | 4 | Pull-up 3.3V ESP32-zijde |
-| R9–R12 | Weerstand | 1 kΩ | 0805 | 4 | Serie status-LED (optioneel) |
-| LED1–LED4 | LED | groen | 0805 | 4 | Optioneel — visuele pulsbevestiging |
-| J1–J4 | Schroefbornier | 2-polig, 5mm | THT | 4 | S0+ en S0- per kanaal |
-| J5 | RJ45 female | 8P8C | THT | 1 | Verbinding naar ESP32 shield |
-| C1 | Condensator | 100 nF | 0805 | 1 | Ontkoppeling 3.3V voeding |
+| Ref | Component | Waarde / Type | Footprint | Qty | LCSC # | Opmerking |
+| --- | --- | --- | --- | --- | --- | --- |
+| R1,R3,R5,R7 | Weerstand | 10 kΩ | 0805 | 4 | C98220 | Pull-up 3.3V per kanaal |
+| C1,C2,C3,C4 | Condensator | 10 nF | 0805 | 4 | C57112 | HF-filter per kanaal |
+| R2,R4,R6,R8 | Weerstand | 1 kΩ | 0805 | 4 | C21190 | Serie status-LED (optioneel) |
+| LED1–LED4 | LED | 3mm groen | 0805 | 4 | C2286 | Optioneel — visuele pulsbevestiging |
+| J1–J4 | Schroefbornier | 2-polig, 3,5mm | THT/SMD | 4 | C474033 | S0+ en S0- per kanaal |
+| J5 | RJ45 female | 8P8C | THT | 1 | C2884862 | Verbinding naar ESP32 shield |
+| C5 | Condensator | 100 nF | 0805 | 1 | C49678 | Ontkoppeling 3.3V voeding |
+
+> LCSC-nummers zijn indicatief — verifiëren bij aanmaken BOM in EasyEDA/Eagle.
 
 **Panelisatie:**
 - 4× 40×40mm tiles in 2×2 raster op 100×100mm panel
-- V-score snijlijnen tussen tiles (geen mousebites — vlakke breukrand)
+- V-score snijlijnen tussen tiles (vlakke breukrand, makkelijker te separeren dan mousebites)
 - JLCPCB: 5 panels bestellen = 20 individuele bordjes voor ±€5 excl. verzending
+- Optie: JLCPCB SMT Assembly voor R en C (volledig geassembleerd behalve connectors)
 
 ### 4.5 Verbinding naar ESP32-C6 shield — RJ45
 
@@ -803,6 +886,8 @@ Doel: automatisch sturen op basis van bewezen patronen.
 | --- | --- | --- | --- |
 | AP1 | Westdak SMA omvormer 3: type + SN noteren | Maarten | Open |
 | AP2 | S0-tellers: pulsen/kWh lezen van label | Filip | Open |
+| AP2b | Viessmann Vitovolt 275Wp typeplaatjescode lezen van paneel of installatiedossier | Filip/Maarten | Open |
+| AP2c | Bevestigen of S0-uitgang passief (droog contact) of actief (met spanning) is — staat op label meetmodule | Filip | Open |
 | AP3 | ENTSO-E API token aanvragen (gratis) | Filip | Open |
 | AP4 | ntfy.sh topic instellen op telefoons Filip + Maarten | Filip + Maarten | Open |
 | AP5 | Eagle PCB ontwerp interface board | Filip | Open |
@@ -1256,4 +1341,6 @@ Sketch v0.3 (LED + push):
 | v0.5 | April 2026 | Piek vermogen gesplitst in piek_won en piek_sch: aparte NVS-keys, JSON-keys pw/ps, GAS-kolommen, /history pagina, berekening via proportionele solar verdeling per huishouden |
 | v0.6 | April 2026 | Een aansluiting verduidelijkt, gecombineerde capaciteitspiek pt, dubbel tariefvergelijk dynamisch/vast |
 | v0.7 | April 2026 | JSON-keys, GAS-kolommen en SPIFFS geconsolideerd: §11.4 = enige JSON-referentie, §9.1 = enige GAS-Data-referentie. Duplicaten verwijderd. |
-| v0.8 | April 2026 | WP WON/SCH toegevoegd aan stuurbare verbruikers. PCB: 4 kanalen SMD EL817S SOP-4, 40x40mm 2x2 paneel JLCPCB. Verbinding via RJ45 (Roomsense/Option shield). LED-strip: alle 8 permanent, elk eigen aspect (solar/balans/EPEX nu+straks/ECO/EV/advies/systeem). Push 3 niveaus configureerbaar, standaard enkel URGENT. UI: visuele banner prioriteit boven push. Matrix rij 2 spiegelt LED-aspecten. |
+| v0.8 | April 2026 | (zie v0.9) |
+| v0.9 | April 2026 | Schema S0-interface gecorrigeerd: voeding LED-zijde van 3.3V ESP32-kant, niet van teller. |
+| v1.0 | April 2026 | S0-schema volledig herschreven naar Aanpak A (directe verbinding, geen optocoupler): onderbouwd via IEC 62053-31 interne isolatie. Componentenlijst aangepast (geen EL817S, wel 10nF HF-filter). Zonne-installatie volledig uitgewerkt: 32+12 panelen Viessmann Vitovolt 300 275Wp, SB3600TL-21 specs, SB2.5-1VL-40 specs, vermogensbalans, bezettingsgraad. AP2b en AP2c toegevoegd. | WP WON/SCH toegevoegd aan stuurbare verbruikers. PCB: 4 kanalen SMD EL817S SOP-4, 40x40mm 2x2 paneel JLCPCB. Verbinding via RJ45 (Roomsense/Option shield). LED-strip: alle 8 permanent, elk eigen aspect (solar/balans/EPEX nu+straks/ECO/EV/advies/systeem). Push 3 niveaus configureerbaar, standaard enkel URGENT. UI: visuele banner prioriteit boven push. Matrix rij 2 spiegelt LED-aspecten. |
