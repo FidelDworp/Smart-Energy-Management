@@ -96,9 +96,15 @@ De Smart Energy controller staat in de **inkomhal van Maarten**, naast de Telene
 | EV-lader 1 (WON) | Tesla Wallcharger Gen 3 | Lokale REST API HTTP PUT | 2 |
 | EV-lader 2 (WON) | Merk/type onbekend (AP6) | Nog te bepalen | 3 |
 | Thuisbatterij | Huawei/BYD voorkeur ~2028 | Modbus TCP | 4 |
+| WP WON (Panasonic) | Warmtepomp woning, CZ-TAW1 module | Comfort Cloud API of smart relay (fase 2+) | 5 |
+| WP SCH (Panasonic) | Warmtepomp schuur, CZ-TAW1 module | Comfort Cloud API of smart relay (fase 2+) | 5 |
 | **Regenwaterpomp** | Op WON-teller ~500 kWh/j | **NOOIT STUREN** | --- |
 
 De regenwaterpomp is essentieel voor al het sanitair. Dit is een harde constraint die nooit mag wijzigen.
+
+> Warmtepompen zijn grote verbruikers (~1,5–3 kW) die zinvol zijn om te sturen bij solar-overschot
+> of goedkope EPEX-prijzen. Via de CZ-TAW1 module en Panasonic Comfort Cloud API of via een
+> smart relay op de stuurlijn. Eerst AP10 oplossen (WP WON herregistratie) voor sturing mogelijk is.
 
 ### 2.5 Warmtepompen (Panasonic + CZ-TAW1)
 
@@ -169,53 +175,81 @@ Afgeschermde UTP kabel (~2 m) van verdeelkast naar kastje inkomhal:
 - Pair 3: SCH   S0+ / S0-
 - Pair 4: reserve / scherm naar GND
 
-### 4.3 Schema per S0-kanaal (PC817 optocoupler)
+### 4.3 Schema per S0-kanaal — SMD ontwerp, 4 kanalen
+
+**PCB-specificaties:**
+- Afmeting per bordje: **40 × 40 mm**
+- Panelisatie: **2×2 tiles op 100×100 mm** met V-score snijlijnen
+- Bestelling JLCPCB: 5 panels = **20 bordjes** voor ±€5
+- Componenten: **SMD** (0805 weerstanden, SOP-4 optocouplers)
+- Connector naar ESP32 shield: **RJ45 female** (zie §4.5)
+- S0-ingangen: **4× 2-polige schroefbornier** (5mm raster)
+
+**Schema per S0-kanaal (4× identiek op het bordje):**
 
 ```
-  VERDEELKAST ZIJDE              KASTJE ZIJDE (ESP32)
-  (galvanisch gescheiden)
+  TELLER ZIJDE (galvanisch vrij)    ESP32 SHIELD ZIJDE (3.3V)
 
-  S0+ --[330 Ohm]--+              3.3V
-                   |                |
-               PC817            [10k Ohm]
-               LED anode            |
-               LED kathode          +---> GPIO (INPUT_PULLUP)
-                   |                |
-  S0- ------------+            PC817 collector
-                               PC817 emitter
-                                    |
-                                   GND
+  S0+ --[R 330Ω 0805]--+            3.3V (van RJ45 pin 2)
+                        |               |
+                     EL817S         [R 10kΩ 0805]
+                     (SOP-4)            |
+                     anode              +---> RJ45 data pin --> GPIO INPUT_PULLUP
+                     kathode            |
+                        |            EL817S collector
+  S0- ─────────────────+            EL817S emitter
+                                        |
+                                       GND (van RJ45 pin 1)
 ```
 
-Puls van meter: S0+ naar S0- kort gesloten
-  -> LED PC817 licht op
-  -> Transistor geleidt
-  -> GPIO gaat naar LOW
-  -> ESP32 detecteert FALLING interrupt
+Puls van teller: S0+ – S0− kort gesloten
+→ LED EL817S licht op → transistor geleidt → GPIO naar LOW → ESP32 FALLING interrupt
 
-### 4.4 Componentenlijst PCB
+**SMD component keuze:**
+- Optocoupler: **EL817S** (SOP-4) — drop-in SMD equivalent van PC817
+- Weerstanden: **0805** formaat — makkelijk handmatig te solderen
+- Alle componenten beschikbaar bij LCSC (JLCPCB's component library voor PCBA)
 
-| Component | Waarde | Qty | Opmerking |
+### 4.4 Componentenlijst PCB (SMD, 4 kanalen, 40×40mm)
+
+| Ref | Component | Waarde / Type | Footprint | Qty | Opmerking |
+| --- | --- | --- | --- | --- | --- |
+| U1–U4 | Optocoupler | EL817S | SOP-4 | 4 | 1 per S0-kanaal, LCSC: C6578 |
+| R1,R3,R5,R7 | Weerstand | 330 Ω | 0805 | 4 | Serie LED meter-zijde |
+| R2,R4,R6,R8 | Weerstand | 10 kΩ | 0805 | 4 | Pull-up 3.3V ESP32-zijde |
+| R9–R12 | Weerstand | 1 kΩ | 0805 | 4 | Serie status-LED (optioneel) |
+| LED1–LED4 | LED | groen | 0805 | 4 | Optioneel — visuele pulsbevestiging |
+| J1–J4 | Schroefbornier | 2-polig, 5mm | THT | 4 | S0+ en S0- per kanaal |
+| J5 | RJ45 female | 8P8C | THT | 1 | Verbinding naar ESP32 shield |
+| C1 | Condensator | 100 nF | 0805 | 1 | Ontkoppeling 3.3V voeding |
+
+**Panelisatie:**
+- 4× 40×40mm tiles in 2×2 raster op 100×100mm panel
+- V-score snijlijnen tussen tiles (geen mousebites — vlakke breukrand)
+- JLCPCB: 5 panels bestellen = 20 individuele bordjes voor ±€5 excl. verzending
+
+### 4.5 Verbinding naar ESP32-C6 shield — RJ45
+
+De interface PCB verbindt met de ESP32-C6 shield via de **Roomsense** of **Option**
+aansluiting: een 8-pins RJ45 female bus op het shield, bereikbaar via een korte
+patch-kabel (of rechte kabelverbinding) binnen het kastje.
+
+**RJ45 pinout (T568B kleurcode):**
+
+| RJ45 pin | Kleur (T568B) | Signaal | ESP32 GPIO |
 | --- | --- | --- | --- |
-| PC817 | optocoupler DIP-4 | 3 | 1 per S0-kanaal |
-| R1, R3, R5 | 330 Ohm 1/4W | 3 | Serie met LED (meter-zijde) |
-| R2, R4, R6 | 10k Ohm 1/4W | 3 | Pull-up 3.3V (ESP32-zijde) |
-| LED1, LED2, LED3 | 3mm groen | 3 | Optioneel — visuele pulsbevestiging |
-| R7, R8, R9 | 1k Ohm 1/4W | 3 | Serie met optionele LED |
-| J1 | Schroefbornier 6-polig | 1 | S0+ S0- per kanaal (3 kanalen) |
-| J2 | Pinheader 3-polig | 1 | GND + GPIO3 + GPIO4 + GPIO5 naar shield |
-| J3 | Pinheader 2-polig | 1 | 3.3V + GND van shield |
+| 1 | Oranje-wit | GND | GND |
+| 2 | Oranje | 3.3V | 3.3V |
+| 3 | Groen-wit | S0 Solar | IO3 (interrupt FALLING) |
+| 4 | Blauw | S0 WON | IO4 (interrupt FALLING) |
+| 5 | Blauw-wit | S0 SCH | IO5 (interrupt FALLING) |
+| 6 | Groen | S0 ECO-boiler / reserve | IO6 (interrupt FALLING) |
+| 7 | Bruin-wit | Reserve | IO7 |
+| 8 | Bruin | Reserve | IO1 |
 
-### 4.5 Pinout naar ESP32-C6
-
-| PCB pin | ESP32 GPIO | Functie |
-| --- | --- | --- |
-| OUT1 | IO3 | S0 Solar (interrupt FALLING) |
-| OUT2 | IO4 | S0 Verbruik WON (interrupt FALLING) |
-| OUT3 | IO5 | S0 Verbruik SCH (interrupt FALLING) |
-| GND | GND | Gemeenschappelijke massa |
-
-Eventueel 4e kanaal (IO6) voor ECO-boiler S0 — pad voorzien op PCB.
+> Gebruik een **standaard UTP patchkabel** (max. 30 cm) binnen het kastje.
+> Dezelfde RJ45 pinout geldt voor de UTP kabel naar de verdeelkast (§4.2)
+> maar daar worden enkel de S0-paren gebruikt (pins 3-8), niet 3.3V/GND.
 
 ### 4.6 Waarom geen I2C uitbreiding
 
@@ -245,26 +279,46 @@ Zichtbaar voor Maarten, Celine, Filip en Mireille.
 
 Bibliotheek: Adafruit NeoPixel of FastLED (al beschikbaar in Zarlar ecosystem).
 
-### 5.3 Kleurcode en legende (8 LEDs, van boven naar onder)
+### 5.3 LED-strip indeling — 8 LEDs altijd aan, elk één aspect
 
-| LED | Kleur | Betekenis | Actie voor gebruikers |
+Alle 8 LEDs zijn **altijd actief** en tonen elk een eigen aspect van de energiesituatie.
+Kleur = status, helderheid = intensiteit van het aspect.
+Legende op het kastje naast elke LED (labelstrip of gravure).
+
+**Doelgroep:** Céline, Mireille, Maarten — niet-technisch. In één oogopslag zien
+wat ze kunnen of moeten doen, zonder app te openen.
+
+| LED | Aspect | Kleurschaal | Praktische betekenis |
 | --- | --- | --- | --- |
-| 1 | Wit knipperend | Stroom GOEDKOOP nu (EPEX < 0,05 EUR/kWh) | Zet grote verbruikers aan |
-| 2 | Geel | EPEX prijs laag (0,05-0,15 EUR/kWh) | Goed moment voor wasmachine / vaatwas |
-| 3 | Groen | Solar overschot aanwezig | Verbruik zoveel je wil |
-| 4 | Groen knipperend | Groot solar overschot (> 1 kW) | Ideaal voor ECO-boiler / laden EV |
-| 5 | Blauw | Neutraal — normaal tarief | Normaal verbruik OK |
-| 6 | Oranje | EPEX prijs hoog (> 0,25 EUR/kWh) | Beperk groot verbruik |
-| 7 | Rood | EPEX prijs piek (> 0,40 EUR/kWh) | Stop grote verbruikers! |
-| 8 | Paars | Nacht / geen data | Geen actie nodig |
+| 1 | **Solar productie** | Uit=geen solar / Geel dim=beetje / Geel helder=matig / Groen helder=veel | Hoeveel gratis stroom is er nu? |
+| 2 | **Netto balans** | Rood=we kopen van net / Blauw=evenwicht / Groen=we sturen in | Zijn we netto verbruiker of producent? |
+| 3 | **EPEX prijs nu** | Groen<€0,10 / Geel €0,10-0,20 / Oranje €0,20-0,35 / Rood>€0,35 | Is stroom nu goedkoop of duur? |
+| 4 | **EPEX prijs +1 uur** | Zelfde schaal als LED 3 | Wordt stroom straks goedkoper of duurder? |
+| 5 | **ECO-boiler** | Grijs=uit / Oranje=aan via solar / Wit=aan via goedkoop net / Rood=aan maar duur | Warmt de boiler nu op? Mag dat? |
+| 6 | **EV-lader** | Grijs=niet actief / Groen=laden via solar / Blauw=laden goedkoop tarief / Rood=laden duur tarief | Laadt de auto op een slim moment? |
+| 7 | **Actie-advies** *(samenvatting)* | Groen helder=goed moment grote verbruiker aan / Geel=neutraal / Oranje=wacht even / Rood=vermijd verbruik nu | De belangrijkste LED: wat moet ik doen? |
+| 8 | **Systeem** | Groen=alles OK / Geel=geen EPEX data / Rood=controller offline | Werkt het systeem correct? |
 
-Op elk moment brandt precies 1 LED — de LED die de huidige situatie het best beschrijft.
-Prioriteit van boven naar onder: goedkoopste situatie heeft voorrang.
+**LED 7 — advieslogica (combinatie van solar + EPEX):**
+```
+IF solar_overschot > 500W OF epex_prijs < 0.08:   GROEN  (goed moment)
+ELIF solar_overschot > 0 EN epex_prijs < 0.15:    GEEL   (neutraal-goed)
+ELIF epex_prijs < 0.20:                            GEEL   (normaal)
+ELIF epex_prijs < 0.35:                            ORANJE (wacht)
+ELSE:                                              ROOD   (vermijd verbruik)
+```
 
-### 5.4 Intensiteit
+**Helderheid:**
+- Overdag actief: 40% helderheid als rustige achtergrond
+- Bij urgente situatie (LED 7 = GROEN of ROOD): 100% helder + zachte puls
+- Nacht (23h–06h): 10% — zichtbaar maar niet storend
+- Dimbaar per tijdzone via /settings
 
-Laag (20-30%) overdag als achtergrond. Helder knipperend (100%) bij urgente actie.
-Dimbaar via /settings.
+### 5.4 JSON voor LED-strip
+
+De ESP32 berekent de LED-kleuren intern uit de bestaande data (a, d, n, n2, e, f).
+Geen extra JSON-keys nodig voor de LED-kleuren zelf.
+Key `o` in /json = helderheidspercentage (0–100, instelbaar via /settings).
 
 ---
 
@@ -387,17 +441,44 @@ sendNotification("EPEX piekprijs", "EUR 0,48/kWh nu - stop grote verbruikers", "
 sendNotification("Goedkope stroom vannacht", "Laad EV tussen 02h-05h (gem. EUR 0,02/kWh)", "low");
 ```
 
-### 8.4 Wanneer notificaties sturen (drempelwaarden instelbaar)
+### 8.4 Drie niveaus — instelbaar per gebruiker
 
-| Trigger | Bericht | Prioriteit |
+Push-notificaties zijn **optioneel** en configureerbaar via /settings.
+Standaard: enkel URGENT aan. Maarten wil geen storende berichten — de LED-strip
+en UI zijn zijn primaire informatiebron.
+
+| Niveau | Standaard | Voorbeeldberichten |
 | --- | --- | --- |
-| Solar overschot > 1 kW gedurende 5 min | "Zonne-energie beschikbaar" | Laag |
-| EPEX prijs daalt onder 0,05 EUR/kWh | "Goedkope stroom nu" | Normaal |
-| EPEX prijs stijgt boven 0,35 EUR/kWh | "Dure stroom - vermijd verbruik" | Hoog |
-| Volgende dag goedkoop nachtvenster | "EV laden aanbevolen 02h-05h" | Laag (18h) |
-| Controller offline > 10 min | "Smart Energy onbereikbaar" | Urgent |
+| **URGENT** (altijd aan, niet uitschakelbaar) | AAN | Controller offline >10 min / Heap kritisch laag / WiFi verloren |
+| **ACTIONABLE** (optioneel, per gebruiker) | UIT | "Goedkope stroom nu — ideaal voor wasmachine" / "Grote solar productie — EV laden?" / "Goedkoopste nachtvenster EV: 02h–05h (€0,02/kWh)" |
+| **INFO** (dagelijks rapport, optioneel) | UIT | "Dagrapport: WON €1,84 / SCH €0,92 / Injectie €0,34" |
 
-Alle drempelwaarden instelbaar via /settings. Notificaties per type aan/uit te zetten.
+**Configuratie per gebruiker in /settings:**
+```
+Notificaties:
+  [x] URGENT     — altijd actief (Filip + Maarten)
+  [ ] ACTIONABLE — Filip: AAN  /  Maarten: UIT (eigen voorkeur)
+  [ ] INFO       — Filip: UIT  /  Maarten: UIT
+
+Drempelwaarden (instelbaar):
+  Solar actie-drempel:   500 W overschot gedurende 5 min
+  EPEX goedkoop-drempel: 0,08 EUR/kWh
+  EPEX duur-drempel:     0,35 EUR/kWh
+  Offline-timeout:       10 min
+```
+
+### 8.5 Prioriteit: visueel boven push
+
+De **LED-strip** (§5.3) en het **UI dashboard** zijn de primaire informatiebronnen.
+Push-notificaties zijn enkel aanvullend voor situaties die actie vragen terwijl
+niemand naar het kastje kijkt (bv. 's nachts goedkope stroom voor EV-laden).
+
+**UI dashboard — visuele prioriteiten:**
+- Groot en duidelijk leesbaar op iPhone/Android (mobiel geoptimaliseerd)
+- Huidig advies altijd bovenaan: groene/oranje/rode banner met één duidelijke zin
+  ("☀️ Solar overschot — zet wasmachine aan" / "💰 Goedkope stroom — laad EV" / "🔴 Piekprijs — vermijd verbruik")
+- EPEX-prijsgrafiek 24h direct zichtbaar zonder scrollen
+- Tariefvergelijk dynamisch/vast als compact blok
 
 ---
 
@@ -469,7 +550,7 @@ Keys verwijzen naar §11.4.
 | 4 | e | ECO-boiler | Oranje=aan, dim=uit |
 | 5 | f | Tesla laden | Groen=laden, dim=uit |
 | 6 | g | Override | Rood=override, dim=auto |
-| 7 | o | LED-strip status | Kleur = huidige LED kleur |
+| 7 | o | LED helderheid | Wit dim tot helder |
 | 8-13 | --- | reserve | --- |
 | 14 | ae | Heap KB | Groen>35KB / geel / rood |
 | 15 | ac | RSSI | Groen>=-60 / oranje / rood |
@@ -605,7 +686,7 @@ en sectie 16.4 (Sheets-architectuur) zijn hierop gebaseerd.
 | e | ECO-boiler aan/uit (fase 2) | 0/1 |
 | f | Tesla laden aan/uit (fase 2) | 0/1 |
 | g | Override actief | 0/1 |
-| o | LED-strip actieve positie (0-7) | int |
+| o | LED-strip helderheid (0–100%, instelbaar) | int |
 | p | Laatste push verstuurd (unix timestamp) | int |
 | eod | End-of-day vlag (00:00–00:05) | 0/1 |
 | ac | WiFi RSSI | dBm |
@@ -1174,4 +1255,5 @@ Sketch v0.3 (LED + push):
 | v0.4 | April 2026 | Sectie 16 herschreven: NVS-strategie stroombeveiligd (elke 15 min), twee GAS-tabbladen Data+Verbruik, capaciteitstarief meting en simulatie, SPIFFS dagarchief 20+ jaar, midnight GAS-trigger, /history pagina, volledige kolommen- en key-definitie |
 | v0.5 | April 2026 | Piek vermogen gesplitst in piek_won en piek_sch: aparte NVS-keys, JSON-keys pw/ps, GAS-kolommen, /history pagina, berekening via proportionele solar verdeling per huishouden |
 | v0.6 | April 2026 | Een aansluiting verduidelijkt, gecombineerde capaciteitspiek pt, dubbel tariefvergelijk dynamisch/vast |
-| v0.7 | April 2026 | JSON-keys, GAS-kolommen en SPIFFS geconsolideerd: §11.4 = enige JSON-referentie, §9.1 = enige GAS-Data-referentie, §16.4 = enige Verbruik-referentie. Duplicaten verwijderd. |
+| v0.7 | April 2026 | JSON-keys, GAS-kolommen en SPIFFS geconsolideerd: §11.4 = enige JSON-referentie, §9.1 = enige GAS-Data-referentie. Duplicaten verwijderd. |
+| v0.8 | April 2026 | WP WON/SCH toegevoegd aan stuurbare verbruikers. PCB: 4 kanalen SMD EL817S SOP-4, 40x40mm 2x2 paneel JLCPCB. Verbinding via RJ45 (Roomsense/Option shield). LED-strip: alle 8 permanent, elk eigen aspect (solar/balans/EPEX nu+straks/ECO/EV/advies/systeem). Push 3 niveaus configureerbaar, standaard enkel URGENT. UI: visuele banner prioriteit boven push. Matrix rij 2 spiegelt LED-aspecten. |
