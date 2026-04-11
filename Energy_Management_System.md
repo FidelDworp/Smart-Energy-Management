@@ -1,5 +1,5 @@
 # Energy Management System — Zarlardinge
-## Technisch werkdocument v1.1 — April 2026
+## Technisch werkdocument v1.2 — April 2026
 
 **ESP32-C6 · Arduino IDE · ESPAsyncWebServer · Matter · Google Sheets**
 *Filip Dworp (FiDel) — Zarlardinge (BE)*
@@ -422,36 +422,191 @@ Alternatief eenvoudiger: **Cloudflare Tunnel daemon op de Telenet router**
 
 ### 7.1 Databron
 
-ENTSO-E Transparency Platform: gratis, publiek, geen API-key nodig.
+**energy-charts.info** (Fraunhofer ISE) — gratis, geen API-key nodig, CORS-vriendelijk mits proxy.
 
 ```
-URL: https://web-api.tp.entsoe.eu/api
+URL: https://api.energy-charts.info/price
 Parameters:
-  documentType=A44 (day-ahead prices)
-  in_Domain=10YBE----------2 (Belgie)
-  out_Domain=10YBE----------2
-  periodStart=YYYYMMDD0000
-  periodEnd=YYYYMMDD2300
-  securityToken=<gratis aan te vragen>
+  bzn=BE          (bidding zone België)
+  start=YYYY-MM-DD
+  end=YYYY-MM-DD
+Respons: { unix_seconds: [...], price: [...] }  // prijs in €/MWh
 ```
 
-De ESP32 haalt dagelijks om 14h30 de prijzen op voor de volgende dag (EPEX
-publiceert om ~13h). Data wordt opgeslagen in SPIFFS voor gebruik zonder WiFi.
+Data is beschikbaar in **15-minuut resolutie** (96 waarden/dag voor België).
+EPEX publiceert de dag-ahead prijzen voor de volgende dag dagelijks om **~13:00 CET**.
 
-### 7.2 Weergave in de UI
+> **Waarom niet ENTSO-E?**
+> ENTSO-E vereist een API-token en blokkeert browser-requests (geen CORS-headers).
+> energy-charts.info is publiek, stabiel en geeft dezelfde EPEX SPOT BE data.
 
-- Huidige prijs groot bovenaan in EUR/kWh, kleurgecodeerd
-- Balk- of lijndiagram van de komende 24 uur (Chart.js op /charts pagina)
-- Markering goedkoopste 4 uur (voor EV nachtladen)
-- Markering piekprijzen in rood
-- Advies: "Beste laadvenster EV: 02h-06h (gem. EUR 0,03/kWh)"
+---
 
-### 7.3 Lokale opslag SPIFFS
+### 7.2 Prijsklassen en kleurcodering
 
-Prijsdata opslaan als JSON in SPIFFS (`/epex.json`):
-- Beschikbaar zonder WiFi
-- Gebruikt als basis voor LED-strip kleur en push-notificaties
-- Dagelijks overschreven bij succesvolle download
+| Klasse | Drempel | Kleur | Actie |
+|---|---|---|---|
+| **Negatief** | < 0 ct/kWh | Superhel lime `#a8ff3e` | Je wordt betaald om te verbruiken |
+| **Goedkoop** | 0 – 10 ct/kWh | Donker groen `#2a8a3e` | Laden EV, boiler, batterij |
+| **Normaal** | 10 – 20 ct/kWh | Oranje `#d29922` | Normaal verbruik |
+| **Duur** | > 20 ct/kWh | Rood `#f85149` | Vermijd groot verbruik, ontlaad batterij |
+
+Drempelwaarden zijn configureerbaar via `/settings` en opgeslagen in NVS.
+
+---
+
+### 7.3 48-uurs rolling window
+
+De UI toont altijd **vandaag + morgen** als één aaneengesloten dataset.
+
+**Ophaalstrategie (browser via CORS-proxy, ESP32 direct):**
+
+```
+Bij elke uurlijkse refresh:
+  1. Haal vandaag op  → altijd beschikbaar
+  2. Haal morgen op   → beschikbaar na ~13:00, anders lege array
+  3. Samenvoegen tot één dataset van 48–96 tijdslots
+  4. Opslaan in cache (localStorage browser / NVS ESP32)
+```
+
+**Continuïteit om middernacht:**
+
+Het systeem valt NIET terug op demo-data bij de overgang naar een nieuwe dag.
+De gecachte dataset bevat al de volledige volgende dag (opgehaald om ~13u).
+Om middernacht filtrert de UI automatisch de verstreken slots weg en toont de resterende toekomstige uren.
+
+Cache-geldigheid: 26 uur. Na 26 uur zonder succesvolle refresh → melding aan gebruiker.
+
+```
+Tijdlijn:
+  12:00  EPEX publiceert morgen-prijzen
+  13:00  ESP32 haalt vandaag + morgen op → 48u dataset in NVS/cache
+  00:00  Middernacht: filter slots < nu weg, cache bevat nog ~24u data
+  13:00  Nieuwe refresh → opnieuw 48u beschikbaar
+```
+
+---
+
+### 7.4 Arbitrage-periodedetectie
+
+In plaats van losse uurprijzen toont de UI **aaneengesloten periodes** per prijsklasse.
+Dit vergemakkelijkt het instellen van timers voor grote verbruikers.
+
+**Algoritme:**
+
+```javascript
+// Detecteer interval automatisch (15 min of 60 min)
+intervalMs = tijden[1] - tijden[0]
+
+// Groepeer aaneengesloten slots binnen een prijsband
+voor elk slot i:
+  als prijs binnen [drempelMin, drempelMax]:
+    voeg toe aan huidige periode
+  anders:
+    sluit huidige periode af → sla op met vanTijd, totTijd, gem, duur
+    (totTijd = tijden[einde] + 1 interval)
+
+// Toon enkel toekomstige periodes (totTijd > nu)
+// Sorteer op gemiddelde prijs (goedkoopste eerst, duurste eerst)
+```
+
+**Weergave per kolom:**
+
+| Kolom | Inhoud |
+|---|---|
+| ↓ Best om te verbruiken | Negatieve periodes (★) + Goedkope periodes, alle toekomstige |
+| ↑ Best om batterij te ontladen | Dure periodes (> 20 ct), alle toekomstige |
+| Onderaan | Opbrengst batterijarbitrage per 24u = spread × batterijkWh × 0,92 ÷ 100 |
+
+---
+
+### 7.5 Implementatie browser (GitHub Pages / testpagina)
+
+**Bestand:** `epex-grafiek.html` — volledig zelfstandig, geen backend nodig.
+
+**CORS-proxy voor browser:**
+Browsers mogen niet rechtstreeks `api.energy-charts.info` aanroepen vanuit een andere origin.
+Tijdelijke oplossing voor de testpagina via `corsproxy.io`:
+
+```javascript
+const url = `https://corsproxy.io/?url=${encodeURIComponent(apiUrl)}`;
+```
+
+> **Deze proxy vervalt zodra de ESP32 de data serveert.**
+> De browser-UI zal dan `http://192.168.0.73/epex` aanroepen — geen CORS-probleem,
+> want zelfde lokaal netwerk (of via Cloudflare Tunnel).
+
+**Persistente instellingen (localStorage):**
+
+| Sleutel | Waarde | Default |
+|---|---|---|
+| `vast_prijs` | Vaste contractprijs ct/kWh | 28.0 |
+| `bat_kwh` | Batterijcapaciteit kWh | 10 |
+| `epex_tijden` | Gecachte tijdstempels (JSON) | — |
+| `epex_prijzen` | Gecachte prijzen €/MWh (JSON) | — |
+| `epex_ts` | Timestamp laatste succesvolle fetch | — |
+
+---
+
+### 7.6 Implementatie ESP32 (fase 1+)
+
+De ESP32 haalt de EPEX-data **server-side** op — geen CORS-proxy nodig.
+
+**Dagelijks ophalen (om 13:30):**
+
+```cpp
+// In loop(): check elke minuut
+if (hour() == 13 && minute() == 30 && !epexGeladen) {
+    haalEpexOp(morgen);   // vandaag + morgen samenvoegen
+    epexGeladen = true;
+}
+if (hour() == 0) epexGeladen = false;  // reset om middernacht
+```
+
+**Opslag in NVS** (vervanger van localStorage):
+
+```cpp
+prefs.putString("epex_tijden",  jsonTijden);
+prefs.putString("epex_prijzen", jsonPrijzen);
+prefs.putULong("epex_ts",       millis());
+```
+
+**Endpoint `/epex` (nieuw, voor browser-UI):**
+
+```json
+{
+  "unix_seconds": [1744322400, 1744323300, ...],
+  "price": [45.2, 42.1, ...],
+  "interval_s": 900,
+  "cached_ts": 1744315800
+}
+```
+
+De browser-UI roept `/epex` aan i.p.v. `corsproxy.io` → geen externe afhankelijkheid.
+
+**Integratie in /json endpoint** (bestaande keys uitbreiden):
+
+| Key | Beschrijving | Eenheid |
+|---|---|---|
+| `ep` | EPEX prijs huidig uur | ct/kWh |
+| `epd` | EPEX prijsklasse huidig uur (0=neg, 1=goedkoop, 2=normaal, 3=duur) | — |
+| `ep_min` | Goedkoopste prijs komende 48u | ct/kWh |
+| `ep_max` | Duurste prijs komende 48u | ct/kWh |
+| `ep_gem` | Gemiddelde prijs vandaag | ct/kWh |
+
+---
+
+### 7.7 LED-strip koppeling (fase 2)
+
+De EPEX-prijsklasse stuurt mee de LED-strip kleur (naast solar-overschot):
+
+| Situatie | LED kleur |
+|---|---|
+| Negatieve prijs | Pulserende lime `#a8ff3e` |
+| Goedkoop + solar-overschot | Fel groen |
+| Goedkoop, geen overschot | Donker groen |
+| Duur, batterij beschikbaar | Oranje pulseren (ontlaad nu) |
+| Duur, geen batterij | Rood |
 
 ---
 
@@ -1301,6 +1456,11 @@ Sketch v0.3 (LED + push):
 ---
 
 ## 15. Versiegeschiedenis
+
+| Versie | Datum | Wijzigingen |
+|---|---|---|
+| **v1.2** | April 2026 | Sectie 7 volledig herschreven: energy-charts.info API, 48u rolling window, 3 prijsklassen, arbitrageperiodes, localStorage cache, ESP32 /epex endpoint |
+
 
 | Versie | Datum | Inhoud |
 | --- | --- | --- |
