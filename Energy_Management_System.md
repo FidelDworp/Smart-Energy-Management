@@ -1,5 +1,5 @@
 # Energy Management System — Zarlardinge
-## Technisch werkdocument v1.2 — April 2026
+## Technisch werkdocument v1.3 — April 2026
 
 **ESP32-C6 · Arduino IDE · ESPAsyncWebServer · Matter · Google Sheets**
 *Filip Dworp (FiDel) — Zarlardinge (BE)*
@@ -312,66 +312,72 @@ kan dit sneller). Directe GPIO-interrupts zijn de enige correcte aanpak voor S0.
 
 ---
 
-## 5. LED-strip indicatie — 8 pixels WS2812B
+## 5. LED-strip indicatie — 12 pixels WS2812B
 
 ### 5.1 Plaatsing
 
-Verticale strip van **8 WS2812B LEDs** op de buitenkant van het kastje in de
-inkomhal van Maarten. Legende naast elke LED (labelstrip of gravure).
-Zichtbaar voor Maarten, Celine, Filip en Mireille.
+Horizontale strip van **12 WS2812B LEDs** op de buitenkant van het kastje in de inkomhal van Maarten.
+Symbool + korte titel naast elke LED (labelstrip of gravure).
+Zichtbaar voor Maarten, Céline, Filip en Mireille zonder app te openen.
 
 ### 5.2 Bedrading
 
 | Aansluiting | Waarde |
 | --- | --- |
-| ESP32 GPIO | IO10 (of vrije pin, aan te passen) |
+| ESP32 GPIO | IO10 |
 | Voeding pixels | 5V (rechtstreeks van voeding, niet van ESP32 3.3V!) |
 | GND | Gemeenschappelijk met ESP32 |
 | Data | Via 330 Ohm serie-weerstand naar DIN WS2812B |
 | Ontkoppelcondensator | 100 uF 10V over 5V-GND aan begin strip |
 
-Bibliotheek: Adafruit NeoPixel of FastLED (al beschikbaar in Zarlar ecosystem).
+Bibliotheek: Adafruit NeoPixel of FastLED.
 
-### 5.3 LED-strip indeling — 8 LEDs altijd aan, elk één aspect
+### 5.3 LED-indeling — 12 pixels in 5 groepen
 
-Alle 8 LEDs zijn **altijd actief** en tonen elk een eigen aspect van de energiesituatie.
-Kleur = status, helderheid = intensiteit van het aspect.
-Legende op het kastje naast elke LED (labelstrip of gravure).
+Alle 12 LEDs altijd actief. Kleur = status, helderheid = intensiteit.
+Doelgroep: Céline en Mireille voor snelle beslissingen, Filip en Maarten voor energiebeheer.
 
-**Doelgroep:** Céline, Mireille, Maarten — niet-technisch. In één oogopslag zien
-wat ze kunnen of moeten doen, zonder app te openen.
+**Live testpagina (LED-simulatie):** https://fideldworp.github.io/ZarlarApp/epex-grafiek.html
 
-| LED | Aspect | Kleurschaal | Praktische betekenis |
-| --- | --- | --- | --- |
-| 1 | **Solar productie** | Uit=geen solar / Geel dim=beetje / Geel helder=matig / Groen helder=veel | Hoeveel gratis stroom is er nu? |
-| 2 | **Netto balans** | Rood=we kopen van net / Blauw=evenwicht / Groen=we sturen in | Zijn we netto verbruiker of producent? |
-| 3 | **EPEX prijs nu** | Groen<€0,10 / Geel €0,10-0,20 / Oranje €0,20-0,35 / Rood>€0,35 | Is stroom nu goedkoop of duur? |
-| 4 | **EPEX prijs +1 uur** | Zelfde schaal als LED 3 | Wordt stroom straks goedkoper of duurder? |
-| 5 | **ECO-boiler** | Grijs=uit / Oranje=aan via solar / Wit=aan via goedkoop net / Rood=aan maar duur | Warmt de boiler nu op? Mag dat? |
-| 6 | **EV-lader** | Grijs=niet actief / Groen=laden via solar / Blauw=laden goedkoop tarief / Rood=laden duur tarief | Laadt de auto op een slim moment? |
-| 7 | **Actie-advies** *(samenvatting)* | Groen helder=goed moment grote verbruiker aan / Geel=neutraal / Oranje=wacht even / Rood=vermijd verbruik nu | De belangrijkste LED: wat moet ik doen? |
-| 8 | **Systeem** | Groen=alles OK / Geel=geen EPEX data / Rood=controller offline | Werkt het systeem correct? |
+| # | Sym | Titel | Groep | Kleurlogica |
+| --- | --- | --- | --- | --- |
+| 1 | ☀️ | Solar | Energie | Uit=geen / dim groen=weinig / fel groen=veel (sinusoïde 07-20u) |
+| 2 | 💰 | Prijs | Energie | Lime=negatief / groen=goedkoop / geel=normaal / rood=duur |
+| 3 | ⚖️ | Netto | Energie | Groen=overschot naar net / rood=afname van net |
+| 4 | 🔋 | Batterij | Batterij | Groen=laden / oranje=ontladen / dim=idle (kleur = SOC) |
+| 5 | ♨️ | ECO | Groot | Groen=aan / zwart=uit |
+| 6 | 🚙 | EV WON | Groot | Groen gradient op laadvermogen (0–9 kW) |
+| 7 | 🚗 | EV SCH | Groot | Idem |
+| 8 | 🏠 | WP WON | Groot | Groen=aan / zwart=uit |
+| 9 | 🏚️ | WP SCH | Groot | Groen=aan / zwart=uit |
+| 10 | 🍳 | Koken? | Advies | Lime=negatief prijs / groen=goed moment / geel=kan / rood=duur of piek vol |
+| 11 | 👕 | Wassen? | Advies | Zelfde logica, drempel 2 kW piekcapaciteit |
+| 12 | 📊 | Piek | Piek | Groen=OK / geel=75-90% / oranje=90-100% / rood=over limiet |
 
-**LED 7 — advieslogica (combinatie van solar + EPEX):**
+**Pixels 10 en 11 (🍳 en 👕) zijn speciaal voor Céline en Mireille:**
+groen = goed moment om in te schakelen (goedkope stroom + voldoende piegruimte),
+rood = wacht (duur of piek bijna vol).
+
+**Advieslogica pixels 10-11:**
 ```
-IF solar_overschot > 500W OF epex_prijs < 0.08:   GROEN  (goed moment)
-ELIF solar_overschot > 0 EN epex_prijs < 0.15:    GEEL   (neutraal-goed)
-ELIF epex_prijs < 0.20:                            GEEL   (normaal)
-ELIF epex_prijs < 0.35:                            ORANJE (wacht)
-ELSE:                                              ROOD   (vermijd verbruik)
+EPEX < 0 ct:                          → LIME  (negatief = echt gratis)
+EPEX < 10 ct EN piekcapaciteit >= kW: → GROEN (goedkoop + ruimte)
+EPEX < 20 ct EN piekcapaciteit >= kW: → GEEL  (normaal, ruimte)
+piekcapaciteit < kW:                  → DIM ROOD (piek vol)
+EPEX >= 20 ct:                        → ROOD  (duur)
 ```
 
-**Helderheid:**
-- Overdag actief: 40% helderheid als rustige achtergrond
-- Bij urgente situatie (LED 7 = GROEN of ROOD): 100% helder + zachte puls
-- Nacht (23h–06h): 10% — zichtbaar maar niet storend
-- Dimbaar per tijdzone via /settings
+### 5.4 Helderheid
 
-### 5.4 JSON voor LED-strip
+- Overdag actief: 40% helderheid
+- Advies-pixels groen/rood: 100% + zachte puls
+- Nacht (23h-06h): 10%
+- Dimbaar via /settings (key `o` in /json)
 
-De ESP32 berekent de LED-kleuren intern uit de bestaande data (a, d, n, n2, e, f).
-Geen extra JSON-keys nodig voor de LED-kleuren zelf.
-Key `o` in /json = helderheidspercentage (0–100, instelbaar via /settings).
+### 5.5 JSON keys voor LED-strip
+
+De ESP32 berekent LED-kleuren intern. Geen extra /json keys nodig.
+Key `o` = helderheidspercentage (0-100).
 
 ---
 
@@ -418,195 +424,191 @@ Alternatief eenvoudiger: **Cloudflare Tunnel daemon op de Telenet router**
 
 ---
 
-## 7. EPEX day-ahead prijsdata in de UI
+## 7. EPEX day-ahead prijsdata — plannings-UI en controller
+
+**Live testpagina:** https://fideldworp.github.io/ZarlarApp/epex-grafiek.html
+**Broncode:** `epex-grafiek.html` in GitHub repo `fideldworp/ZarlarApp`
 
 ### 7.1 Databron
 
-**energy-charts.info** (Fraunhofer ISE) — gratis, geen API-key nodig, CORS-vriendelijk mits proxy.
+**energy-charts.info** (Fraunhofer ISE) — gratis, geen API-key, 15-minuut resolutie voor België.
 
 ```
-URL: https://api.energy-charts.info/price
-Parameters:
-  bzn=BE          (bidding zone België)
-  start=YYYY-MM-DD
-  end=YYYY-MM-DD
+URL: https://api.energy-charts.info/price?bzn=BE&start=YYYY-MM-DD&end=YYYY-MM-DD
 Respons: { unix_seconds: [...], price: [...] }  // prijs in €/MWh
 ```
 
-Data is beschikbaar in **15-minuut resolutie** (96 waarden/dag voor België).
-EPEX publiceert de dag-ahead prijzen voor de volgende dag dagelijks om **~13:00 CET**.
+EPEX publiceert dag-ahead prijzen dagelijks om ~13:00 CET voor de volgende dag.
+**Browserbeperking:** direct fetchen vanuit browser wordt geblokkeerd (CORS).
+Tijdelijke oplossing op GitHub Pages: `https://corsproxy.io/?url=<apiUrl>`.
+Op de ESP32: controller haalt zelf op, geen proxy nodig.
 
-> **Waarom niet ENTSO-E?**
-> ENTSO-E vereist een API-token en blokkeert browser-requests (geen CORS-headers).
-> energy-charts.info is publiek, stabiel en geeft dezelfde EPEX SPOT BE data.
-
----
-
-### 7.2 Prijsklassen en kleurcodering
-
-| Klasse | Drempel | Kleur | Actie |
-|---|---|---|---|
-| **Negatief** | < 0 ct/kWh | Superhel lime `#a8ff3e` | Je wordt betaald om te verbruiken |
-| **Goedkoop** | 0 – 10 ct/kWh | Donker groen `#2a8a3e` | Laden EV, boiler, batterij |
-| **Normaal** | 10 – 20 ct/kWh | Oranje `#d29922` | Normaal verbruik |
-| **Duur** | > 20 ct/kWh | Rood `#f85149` | Vermijd groot verbruik, ontlaad batterij |
-
-Drempelwaarden zijn configureerbaar via `/settings` en opgeslagen in NVS.
-
----
-
-### 7.3 48-uurs rolling window
-
-De UI toont altijd **vandaag + morgen** als één aaneengesloten dataset.
-
-**Ophaalstrategie (browser via CORS-proxy, ESP32 direct):**
+### 7.2 Reële prijsstructuur
 
 ```
-Bij elke uurlijkse refresh:
-  1. Haal vandaag op  → altijd beschikbaar
-  2. Haal morgen op   → beschikbaar na ~13:00, anders lege array
-  3. Samenvoegen tot één dataset van 48–96 tijdslots
-  4. Opslaan in cache (localStorage browser / NVS ESP32)
+Reële prijs (ct/kWh) = EPEX_spotprijs (ct/kWh) + OPSLAG_CT (ct/kWh)
 ```
 
-**Continuïteit om middernacht:**
+De vaste opslag (~21 ct/kWh) is een **absoluut bedrag**, geen percentage:
 
-Het systeem valt NIET terug op demo-data bij de overgang naar een nieuwe dag.
-De gecachte dataset bevat al de volledige volgende dag (opgehaald om ~13u).
-Om middernacht filtrert de UI automatisch de verstreken slots weg en toont de resterende toekomstige uren.
+| Component | ca. ct/kWh |
+| --- | --- |
+| Fluvius distributienettarief | ~9 ct |
+| Elia transmissie | ~1 ct |
+| Energieheffingen & accijnzen | ~2 ct |
+| Hernieuwbare bijdragen | ~1.5 ct |
+| BTW 6% | ~2.5 ct |
+| Verwerkingskost leverancier | ~5 ct |
+| **Totaal opslag** | **~21 ct** |
 
-Cache-geldigheid: 26 uur. Na 26 uur zonder succesvolle refresh → melding aan gebruiker.
+Ook bij negatieve EPEX-prijs wordt deze opslag aangerekend.
+De reële prijs wordt negatief enkel als EPEX < -21 ct/kWh (zeldzaam).
+
+**De arbitrage-spread verandert niet door de opslag** — die valt weg in het verschil.
+
+### 7.3 Prijsklassen (op EPEX-basis)
+
+| Klasse | EPEX drempel | Kleur | Code |
+| --- | --- | --- | --- |
+| Negatief | < 0 ct/kWh | Superhel lime | `#a8ff3e` |
+| Goedkoop | 0–10 ct/kWh | Donker groen | `#2a8a3e` |
+| Normaal | 10–20 ct/kWh | Geel/oranje | `#d29922` |
+| Duur | > 20 ct/kWh | Rood | `#f85149` |
+
+### 7.4 48u rolling window
 
 ```
-Tijdlijn:
-  12:00  EPEX publiceert morgen-prijzen
-  13:00  ESP32 haalt vandaag + morgen op → 48u dataset in NVS/cache
-  00:00  Middernacht: filter slots < nu weg, cache bevat nog ~24u data
-  13:00  Nieuwe refresh → opnieuw 48u beschikbaar
+Bij uurlijkse refresh:
+  1. Haal vandaag op (altijd beschikbaar)
+  2. Haal morgen op (beschikbaar na ~13:00)
+  3. Samenvoegen → dataset van 96–192 kwartierslots
+  4. Opslaan in localStorage (browser) / NVS (ESP32)
+
+Cache-geldigheid: 26 uur
+Om middernacht: filter verstreken slots weg, cache bevat al de nieuwe dag
 ```
 
----
+### 7.5 Grafiek
 
-### 7.4 Arbitrage-periodedetectie
+De 48u-grafiek toont gestapelde balken:
+- **Gekleurde balk** = kale EPEX spotprijs (prijsklasse-kleur)
+- **Grijs balkje** = vaste opslag (nettarief + heffingen)
+- **Witte stippellijn** = vast contract (instelbaar)
+- **Witte vertikale lijn** = huidig tijdstip (exact op de minuut)
+- **Blauwe stippellijn** = dag-scheiding (middernacht)
+- **Blauwe volle lijn** = slider-positie
 
-In plaats van losse uurprijzen toont de UI **aaneengesloten periodes** per prijsklasse.
-Dit vergemakkelijkt het instellen van timers voor grote verbruikers.
+Tooltip toont: EPEX + opslag + totaal + vergelijking vast contract.
 
-**Algoritme:**
+### 7.6 Planningstabel
 
-```javascript
-// Detecteer interval automatisch (15 min of 60 min)
-intervalMs = tijden[1] - tijden[0]
+Chronologische tabel: alle toekomstige periodes van nu → einde data.
+Huidige periode bovenaan met `▶` markering en witte rand.
 
-// Groepeer aaneengesloten slots binnen een prijsband
-voor elk slot i:
-  als prijs binnen [drempelMin, drempelMax]:
-    voeg toe aan huidige periode
-  anders:
-    sluit huidige periode af → sla op met vanTijd, totTijd, gem, duur
-    (totTijd = tijden[einde] + 1 interval)
-
-// Toon enkel toekomstige periodes (totTijd > nu)
-// Sorteer op gemiddelde prijs (goedkoopste eerst, duurste eerst)
-```
-
-**Weergave per kolom:**
+**Kolomstructuur:**
 
 | Kolom | Inhoud |
-|---|---|
-| ↓ Best om te verbruiken | Negatieve periodes (★) + Goedkope periodes, alle toekomstige |
-| ↑ Best om batterij te ontladen | Dure periodes (> 20 ct), alle toekomstige |
-| Onderaan | Opbrengst batterijarbitrage per 24u = spread × batterijkWh × 0,92 ÷ 100 |
+| --- | --- |
+| ⏰ Periode | van–tot, dag, duur |
+| 💰 Prijs | Reële prijs ct/kWh (EPEX + opslag), kleurgecodeerd |
+| 🍳🌡️🍽️👕🌀 | Huishoudtoestellen — **manueel**, altijd klikbaar, default uit |
+| ♨️🚙🚗🏠🏚️🔋 | Grootverbruikers — **automatisch** algoritme, override via knoppen |
+| 📊 Totaal | Piek kW (kleurverloop grijs→groen→geel→oranje→rood vs MAX_PIEK) |
 
----
+Verticale **blauwe stippellijn** (3px) scheidt huishoud van groot.
 
-### 7.5 Implementatie browser (GitHub Pages / testpagina)
+**Algoritme per prijsklasse:**
 
-**Bestand:** `epex-grafiek.html` — volledig zelfstandig, geen backend nodig.
-
-**CORS-proxy voor browser:**
-Browsers mogen niet rechtstreeks `api.energy-charts.info` aanroepen vanuit een andere origin.
-Tijdelijke oplossing voor de testpagina via `corsproxy.io`:
-
-```javascript
-const url = `https://corsproxy.io/?url=${encodeURIComponent(apiUrl)}`;
+```
+NEGATIEF:  alle groot aan (piek permitting) + bat_laden GEFORCEERD
+GOEDKOOP:  eco + EVs + bat_laden aan; WPs uit; vul tot MAX_PIEK
+NORMAAL:   alles uit
+DUUR:      alles uit + bat_ontladen GEFORCEERD
 ```
 
-> **Deze proxy vervalt zodra de ESP32 de data serveert.**
-> De browser-UI zal dan `http://192.168.0.73/epex` aanroepen — geen CORS-probleem,
-> want zelfde lokaal netwerk (of via Cloudflare Tunnel).
-
-**Persistente instellingen (localStorage):**
-
-| Sleutel | Waarde | Default |
-|---|---|---|
-| `vast_prijs` | Vaste contractprijs ct/kWh | 28.0 |
-| `bat_kwh` | Batterijcapaciteit kWh | 10 |
-| `epex_tijden` | Gecachte tijdstempels (JSON) | — |
-| `epex_prijzen` | Gecachte prijzen €/MWh (JSON) | — |
-| `epex_ts` | Timestamp laatste succesvolle fetch | — |
-
----
-
-### 7.6 Implementatie ESP32 (fase 1+)
-
-De ESP32 haalt de EPEX-data **server-side** op — geen CORS-proxy nodig.
-
-**Dagelijks ophalen (om 13:30):**
-
-```cpp
-// In loop(): check elke minuut
-if (hour() == 13 && minute() == 30 && !epexGeladen) {
-    haalEpexOp(morgen);   // vandaag + morgen samenvoegen
-    epexGeladen = true;
-}
-if (hour() == 0) epexGeladen = false;  // reset om middernacht
+**Piekbeheer afschakelvolgorde (bij MAX_PIEK overschrijding):**
+```
+1. EV SCH (Maarten — laagste prio, laadt elders)
+2. Batterij laden
+3. ECO-boiler
+4. WP SCH
+5. EV WON (Filip)
+6. WP WON (allerlaatst — comfort)
 ```
 
-**Opslag in NVS** (vervanger van localStorage):
+**Override-knoppen** (per apparaat, onderaan simulatie):
+- AUTO: algoritme beslist
+- AAN: nooit afschakelen (ook niet bij piekbeheer)
+- UIT: altijd uit in alle periodes
 
-```cpp
-prefs.putString("epex_tijden",  jsonTijden);
-prefs.putString("epex_prijzen", jsonPrijzen);
-prefs.putULong("epex_ts",       millis());
+Wijziging override → tabel herberekent onmiddellijk.
+
+**Piekkolom berekening:**
 ```
+piek_kW = Σ(aangevinkte huishoud.kw) + Σ(aangevinkte groot.kw) + bat_laden_kw
+```
+Pure optelling — geen energy sharing — toont worst-case netafname.
 
-**Endpoint `/epex` (nieuw, voor browser-UI):**
+### 7.7 Simulatie — LED-strip replica
 
+Tijdschuif (nu → einde data) met live LED-strip simulatie.
+Per slider-positie:
+- 12 LED pixels bijgewerkt (zie sectie 5.3)
+- SOC-balk evolueert slot per slot
+- Piekmeter met kleur
+- Apparatenstatus met vermogen
+- Dynamische titel: `💡 Simulatie · 6.2kW verbruik · 🔋↑3.0kW`
+
+**Batterij bij negatieve prijs:**
+- bat_laden geforceerd (niet uitschakelbaar)
+- Laadsnelheid = max(0.5C of 7.4 kW) — zo snel mogelijk vol
+
+### 7.8 Instellingen (localStorage → NVS op ESP32)
+
+| Parameter | Sleutel | Default |
+| --- | --- | --- |
+| Vaste contractprijs | `vast_prijs` | 28.0 ct/kWh |
+| Batterijcapaciteit | `bat_kwh` | 10 kWh |
+| Start SOC simulatie | `soc_start` | 50% |
+| Solar max vermogen | `solar_max_kw` | 8 kW |
+| Max piekgrens | `max_piek` | 15 kW |
+| Capaciteitstarief | `cap_tar` | 4.80 €/kW/mnd |
+| Vaste opslag | `opslag_ct` | 21 ct/kWh |
+| Periode-keuzes tabel | `periode_keuzes` | — |
+| Override per apparaat | `overrides` | — |
+
+### 7.9 Van GitHub Pages naar ESP32
+
+| GitHub Pages (nu) | ESP32 (fase 1+) |
+| --- | --- |
+| `corsproxy.io` → energy-charts | ESP32 haalt zelf op → `/epex` endpoint |
+| `localStorage` instellingen | `NVS` (Preferences library) |
+| Sinusoïde voor solar | Echte S0-meting via `/json` key `a` |
+| Demo-data fallback | NVS-cache fallback |
+
+**Nieuw endpoint `/epex` (ESP32):**
 ```json
 {
-  "unix_seconds": [1744322400, 1744323300, ...],
-  "price": [45.2, 42.1, ...],
+  "unix_seconds": [1744322400, ...],
+  "price": [45.2, ...],
   "interval_s": 900,
+  "opslag_ct": 21,
   "cached_ts": 1744315800
 }
 ```
 
-De browser-UI roept `/epex` aan i.p.v. `corsproxy.io` → geen externe afhankelijkheid.
+**Nieuw endpoint `/planning` (ESP32):**
+```json
+{
+  "overrides": {"eco":"auto","ev_won":"auto","ev_sch":"auto","wp_won":"auto","wp_sch":"auto","bat":"auto"},
+  "max_piek": 15,
+  "cap_tar": 4.80,
+  "vast_prijs": 28.0,
+  "opslag_ct": 21
+}
+```
 
-**Integratie in /json endpoint** (bestaande keys uitbreiden):
-
-| Key | Beschrijving | Eenheid |
-|---|---|---|
-| `ep` | EPEX prijs huidig uur | ct/kWh |
-| `epd` | EPEX prijsklasse huidig uur (0=neg, 1=goedkoop, 2=normaal, 3=duur) | — |
-| `ep_min` | Goedkoopste prijs komende 48u | ct/kWh |
-| `ep_max` | Duurste prijs komende 48u | ct/kWh |
-| `ep_gem` | Gemiddelde prijs vandaag | ct/kWh |
-
----
-
-### 7.7 LED-strip koppeling (fase 2)
-
-De EPEX-prijsklasse stuurt mee de LED-strip kleur (naast solar-overschot):
-
-| Situatie | LED kleur |
-|---|---|
-| Negatieve prijs | Pulserende lime `#a8ff3e` |
-| Goedkoop + solar-overschot | Fel groen |
-| Goedkoop, geen overschot | Donker groen |
-| Duur, batterij beschikbaar | Oranje pulseren (ontlaad nu) |
-| Duur, geen batterij | Rood |
+De browser-UI op de controller roept `/epex` en `/planning` aan — geen externe API, geen proxy.
 
 ---
 
@@ -1458,8 +1460,9 @@ Sketch v0.3 (LED + push):
 ## 15. Versiegeschiedenis
 
 | Versie | Datum | Wijzigingen |
-|---|---|---|
-| **v1.2** | April 2026 | Sectie 7 volledig herschreven: energy-charts.info API, 48u rolling window, 3 prijsklassen, arbitrageperiodes, localStorage cache, ESP32 /epex endpoint |
+| --- | --- | --- |
+| **v1.3** | April 2026 | Sectie 5 herschreven: 12 LED pixels, 5 groepen, advies-pixels voor Céline/Mireille. Sectie 7 volledig herschreven: reële prijsstructuur (EPEX + vaste opslag), plannings-UI met chronologische tabel, manueel/automatisch onderscheid, piekbeheer, override-knoppen, simulatie met SOC, verwijzing naar live testpagina. Vermogens WP gecorrigeerd naar 2.5 kW elektrisch. EVs: 9 kW, energy sharing 6 kW. |
+| **v1.2** | April 2026 | Sectie 7: energy-charts.info API, 48u rolling window, 3 prijsklassen, arbitrageperiodes, localStorage cache, ESP32 /epex endpoint |
 
 
 | Versie | Datum | Inhoud |
