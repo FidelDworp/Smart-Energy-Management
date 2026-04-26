@@ -1943,11 +1943,8 @@ sudo systemctl enable --now cloudflared
 
 ### 17.10 Openstaande actiepunten
 
-| # | Actie | Door wie | Status |
-| --- | --- | --- | --- |
-| AP12 | RPi OS Lite installeren op SD (RPi Imager op Mac) | Filip | Open |
-| AP13 | Cloudflare domein configureren (controllers.zarlardinge.be of gelijkaardig) | Filip | Open |
-| AP14 | nginx + cloudflared instellen en testen | Filip | Open |
-| AP15 | Cloudflare Access policies instellen per endpoint | Filip | Open |
+> ✅ **Alle AP12–AP15 zijn afgewerkt en vervangen door een betere aanpak.**
+> De nginx+cloudflared aanpak is nooit gerealiseerd — vervangen door **Node.js + Tailscale** (zie §18).
+> AP12–AP15 zijn verwijderd uit de actiepuntenlijst in §14.
 
-> Dit hoofdstuk wordt verder uitgewerkt in een nieuw gesprek zodra de Pi klaar is.
+> Dit hoofdstuk (§17) blijft bewaard als historische referentie voor de oorspronkelijke aanpak.
