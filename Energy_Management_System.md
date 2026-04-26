@@ -1,5 +1,5 @@
 # Energy Management System — Zarlardinge
-## Technisch werkdocument v1.6 — April 2026
+## Technisch werkdocument v1.7 — April 2026
 
 **ESP32-C6 · Arduino IDE · ESPAsyncWebServer · Matter · Google Sheets**
 *Filip Dworp (FiDel) — Zarlardinge (BE)*
@@ -51,6 +51,33 @@ Alle controllers publiceren een `/json` endpoint. Het **Zarlar Dashboard (192.16
 | RPi Portal | Node.js server | 192.168.0.50 | v2.0 | ✅ Actief (Tailscale) |
 
 **IP-keuze 192.168.0.73:** past in het blok systeem-controllers (70-74), na ECO (71) en de geplande buitensensor S-OUTSIDE (72). Room-controllers starten vanaf .75.
+
+### Eerste ingebruikname S-ENERGY — 26 april 2026
+
+De S-ENERGY controller werd voor het eerst in gebruik genomen op **26 april 2026 om 21:05**.
+Eerste Google Sheets logging bevestigd met volgende meetwaarden:
+
+| Parameter | Waarde | Opmerking |
+| --- | --- | --- |
+| Tijdstempel | 2026-04-26 21:05:53 | Eerste logging ✅ |
+| Solar W | 2000 W | SIM_S0 actief |
+| SCH afname W | 700 W | SIM_S0 actief |
+| SCH injectie W | 1300 W | SIM_S0 actief |
+| EPEX nu | 22,9 ct/kWh | ✅ Live van RPi |
+| EPEX +1u | 22,7 ct/kWh | ✅ Live van RPi |
+| WiFi RSSI | −49 dBm | ✅ Uitstekend |
+| Heap largest | 256 KB | ✅ Gezond |
+| SIM_S0 | 1 | ⚠️ Simulatie actief — wacht op S0 bekabeling |
+| SIM_P1 | 1 | ⚠️ Simulatie actief — wacht op HomeWizard (~2028) |
+| FW versie | 1.26 | ✅ |
+
+**Validatiestatus bij eerste boot:**
+- ✅ Matrix rij 2 pixels verschenen op fysieke 16×16 matrix
+- ✅ S-ENERGY tegel actief in RPi portal (index.html)
+- ✅ Virtuele matrix (matrix.html) toont rij 2 correct
+- ✅ Google Sheets logging actief (eerste dataregel ontvangen)
+- ✅ EPEX data live ontvangen van RPi
+- ⚠️ SIM_S0 en SIM_P1 beide actief — omschakelen naar LIVE na bekabeling
 
 ---
 
@@ -959,6 +986,7 @@ Doel: een werkende "energiecoach" die meet en adviseert, maar nog niets automati
 | 1.9 | LED matrix 12×4 WS2812B, 48 pixels | ✅ Klaar |
 | 1.10 | RPi portal: /api/poll/senrg + matrix.html + S-ENERGY tegel | ✅ Klaar |
 | 1.11 | SIM_P1: HomeWizard P1 integratie klaar in sketch (wacht op hardware) | ✅ Klaar (LIVE in 2028) |
+| 1.11b | **Eerste ingebruikname 26/04/2026** — alle systemen gevalideerd ✅ | ✅ **Mijlpaal** |
 | 1.12 | S0 bekabeling aansluiten → SIM_S0 uitschakelen | ⬜ Open (na PCB) |
 | 1.13 | ntfy.sh push-notificaties | ⬜ Open (v1.27) |
 
@@ -1023,21 +1051,27 @@ Doel: automatisch sturen op basis van bewezen patronen.
 
 | # | Actie | Door wie | Status |
 | --- | --- | --- | --- |
-| AP1 | Westdak SMA omvormer 3: type + SN noteren | Maarten | Open |
-| AP2 | S0-tellers: pulsen/kWh lezen van label | Filip | Open |
-| AP2b | Viessmann Vitovolt 275Wp typeplaatjescode lezen van paneel of installatiedossier | Filip/Maarten | Open |
-| AP2c | Bevestigen of S0-uitgang passief (droog contact) of actief (met spanning) is — staat op label meetmodule | Filip | Open |
-| AP3 | ENTSO-E API token aanvragen (gratis) | Filip | Open |
-| AP4 | ntfy.sh topic instellen op telefoons Filip + Maarten | Filip + Maarten | Open |
-| AP5 | Eagle PCB ontwerp interface board | Filip | Open |
-| AP6 | EV-lader 2: merk/type en stuurbaarheid | Maarten | Open |
-| AP7 | UTP kabel trekken verdeelkast -> inkomhal | Filip + Maarten | Open |
-| AP8 | SMA Speedwire testen op lokaal netwerk (fase 2) | Filip | Open |
-| AP9 | Jaarbedrag Engie FLOW invullen | Maarten | Open |
-| AP10 | CZ-TAW1 WP WON resetten + herregistreren | Filip | Open |
-| AP11 | Cloudflare Worker uitbreiden voor remote UI | Filip | Open |
+| AP1 | Westdak SMA omvormer 3: type + SN noteren | Maarten | ⬜ Open |
+| AP2 | S0-tellers: pulsen/kWh lezen van label (Inepro PRO380-S = 10.000 imp/kWh ✅) | Filip | ✅ Gedaan |
+| AP2b | Viessmann Vitovolt 275Wp typeplaatje lezen | Filip/Maarten | ⬜ Open |
+| AP2c | S0-uitgang passief of actief bevestigen | Filip | ⬜ Open |
+| AP3 | ENTSO-E API token — **niet meer nodig** (EPEX via RPi /api/epex) | — | ✅ Vervallen |
+| AP4 | ntfy.sh topic instellen op telefoons Filip + Maarten | Filip + Maarten | ⬜ Open (v1.27) |
+| AP5 | Eagle PCB ontwerp S0 interface board | Filip | ⬜ Open |
+| AP6 | EV-lader 2: merk/type en stuurbaarheid | Maarten | ⬜ Open |
+| AP7 | UTP kabel trekken verdeelkast → inkomhal | Filip + Maarten | ⬜ Open |
+| AP8 | SMA Speedwire testen op lokaal netwerk (fase 2) | Filip | ⬜ Open |
+| AP9 | Jaarbedrag Engie FLOW invullen | Maarten | ⬜ Open |
+| AP10 | CZ-TAW1 WP WON resetten + herregistreren | Filip | ⬜ Open |
+| AP11 | Cloudflare Worker uitbreiden voor remote UI — **vervallen** (RPi + Tailscale) | — | ✅ Vervallen |
+| AP12 | S-ENERGY v1.26 flashen en valideren | Filip | ✅ Gedaan (26/04/2026) |
+| AP13 | GAS script ENERGY installeren in Google Sheets | Filip | ✅ Gedaan (26/04/2026) |
+| AP14 | S0 bekabeling aansluiten → SIM_S0 uitschakelen | Filip + Maarten | ⬜ Open (na PCB) |
+| AP15 | HomeWizard P1 dongle plaatsen → SIM_P1 uitschakelen | Maarten | ⬜ Open (~2028) |
+| AP16 | Matter verwijderen uit HVAC, ECO en Dashboard sketches (heap besparing) | Filip | ⬜ Open |
+| AP17 | Maarten + Céline uitnodigen op Tailscale | Filip | ⬜ Open |
 
-Afgevinkt: ESP32-C6 16MB OK, WiFi tellerkast OK, ECO-boiler OEG ~2kW OK, geen HA OK.
+**Afgevinkt eerder:** ESP32-C6 16MB OK · WiFi tellerkast OK · ECO-boiler OEG ~2kW OK · geen HA OK.
 
 ---
 
