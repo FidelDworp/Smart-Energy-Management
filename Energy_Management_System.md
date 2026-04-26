@@ -1,5 +1,5 @@
 # Energy Management System — Zarlardinge
-## Technisch werkdocument v1.4 — April 2026
+## Technisch werkdocument v1.6 — April 2026
 
 **ESP32-C6 · Arduino IDE · ESPAsyncWebServer · Matter · Google Sheets**
 *Filip Dworp (FiDel) — Zarlardinge (BE)*
@@ -45,9 +45,10 @@ Alle controllers publiceren een `/json` endpoint. Het **Zarlar Dashboard (192.16
 | --- | --- | --- | --- | --- |
 | HVAC | ESP32_HVAC | 192.168.0.70 | v1.19 | Productie stabiel |
 | ECO Boiler | ESP32_ECO Boiler | 192.168.0.71 | v1.23 | Productie stabiel |
-| **Smart Energy** | **ESP32_SMART_ENERGY** | **192.168.0.73** | **v0.0** | Te bouwen |
-| ROOM Eetplaats | ESP32_EETPLAATS | 192.168.0.80 | v2.10 | Productie stabiel |
-| Zarlar Dashboard | ESP32_ZARLAR | 192.168.0.60 | v5.0 | Productie stabiel |
+| **Smart Energy** | **ESP32_C6_ENERGY** | **192.168.0.73** | **v1.26** | ✅ Actief (SIM_S0+SIM_P1) |
+| ROOM Eetplaats | ESP32_EETPLAATS | 192.168.0.80 | v2.21 | Productie stabiel |
+| Zarlar Dashboard | ESP32_ZARLAR | 192.168.0.60 | v5.8 | Productie stabiel |
+| RPi Portal | Node.js server | 192.168.0.50 | v2.0 | ✅ Actief (Tailscale) |
 
 **IP-keuze 192.168.0.73:** past in het blok systeem-controllers (70-74), na ECO (71) en de geplande buitensensor S-OUTSIDE (72). Room-controllers starten vanaf .75.
 
@@ -381,46 +382,25 @@ Key `o` = helderheidspercentage (0-100).
 
 ---
 
-## 6. Remote toegang — Cloudflare Tunnel
+## 6. Remote toegang — Raspberry Pi Gateway
 
-### 6.1 Concept
+De remote toegang voor **alle** Zarlar-controllers (HVAC, ECO, Smart Energy, ROOM,
+Dashboard) verloopt via een **Raspberry Pi** die als centrale gateway dient.
+De Pi draait nginx + cloudflared en fungeert als veilige brug tussen het internet
+en het lokale netwerk — zonder open poorten op de Telenet-router.
 
-De ESP32 opent zelf een veilige HTTPS-tunnel naar Cloudflare.
-Geen port-forwarding nodig op de Telenet router.
-Bereikbaar via een vaste URL zoals `smart-energy.zarlardinge.be` van overal ter wereld.
+**Volledige uitwerking: zie §17.**
 
-Sluit aan bij de bestaande Cloudflare-infrastructuur van Filip
-(workers: `controllers-diagnose.filip-delannoy.workers.dev`).
-
-### 6.2 Implementatie op ESP32
-
-Cloudflare Tunnel (cloudflared) draait normaal als daemon op een server.
-Voor ESP32 is de aanpak anders: een **Cloudflare Worker als proxy**:
-
+Bereikbare URLs na installatie:
 ```
-iPhone / Android (overal ter wereld)
-    |
-    v
-https://smart-energy.filip-delannoy.workers.dev  (Cloudflare Worker)
-    |
-    v
-http://192.168.0.73  (ESP32 thuis, lokaal netwerk)
-    |
-    v
-ESPAsyncWebServer response
+https://controllers.zarlardinge.be/senrg/    → Smart Energy (deze controller)
+https://controllers.zarlardinge.be/eco/      → ECO Boiler
+https://controllers.zarlardinge.be/hvac/     → HVAC
+https://controllers.zarlardinge.be/status    → Health alle controllers
 ```
 
-De Worker stuurt de request door naar het lokale IP via een vaste tunnel.
-Authenticatie via een geheim token in de Worker (niet in de browser).
-
-Alternatief eenvoudiger: **Cloudflare Tunnel daemon op de Telenet router**
-(als die OpenWrt draait) of op een Raspberry Pi als die beschikbaar is.
-
-### 6.3 Wat bereikbaar is remote
-
-- `/` — hoofddashboard (read-only view, mobiel geoptimaliseerd)
-- `/json` — live data voor integratie
-- `/settings` — alleen via authenticatie (token in URL of header)
+De ESP32-controllers zelf worden niet gewijzigd voor remote toegang.
+OTA-updates ook mogelijk van overal: `/senrg/update`.
 
 ---
 
@@ -769,157 +749,194 @@ Keys verwijzen naar §11.4.
 
 ## 11. Software architectuur — sketch opbouw
 
-### 11.1 Basis: ECO-boiler v1.23 als template
+### 11.1 Basis — sketch structuur v1.26
 
-De Smart Energy sketch vertrekt van `ESP32_C6_MATTER_ECO-boiler_22mar_2200.ino`
-en behoudt de volledige structuur:
-- ESPAsyncWebServer met chunked streaming
-- Matter integratie
-- SPIFFS logging + NVS crash-log
-- OTA via /update
-- UI-stijl (geel/marineblauw)
+De Smart Energy sketch (`ESP32_C6_ENERGY_v1_26.ino`) is volledig zelfstandig gebouwd,
+gebaseerd op de Zarlar-conventies maar met eigen structuur. Niet van ECO-boiler afgeleid.
 
-Wat nieuw is ten opzichte van ECO-boiler:
-- 3x S0 interrupt-driven pulsmeting (ipv temperatuursensoren)
-- EPEX data ophalen en tonen
-- WS2812B LED-strip aansturen (8 pixels)
-- ntfy.sh push-notificaties
-- Cloudflare Worker integratie (remote toegang)
-- Uitgebreidere /charts pagina (vermogen + EPEX grafiek)
+**Twee onafhankelijke simulatievlaggen (kernprincipe):**
 
-### 11.2 Kritische defines (bovenaan sketch)
+| Vlag | NVS key | Default | Omschakelen naar LIVE |
+| --- | --- | --- | --- |
+| `SIM_S0` | `sim_s0` | `true` | Na S0-bekabeling: uitvinken in /settings → reboot |
+| `SIM_P1` | `sim_p1` | `true` | Na HomeWizard dongle (~2028): uitvinken + P1-IP invullen → reboot |
+
+⚠️ **Nooit automatisch omschakelen** — altijd bewuste handeling om valse logs te voorkomen.
+Beide vlaggen zijn NVS-persistent en onafhankelijk van elkaar.
+
+Serieel commando's: `sim s0 on/off` · `sim p1 on/off` · `status` · `help`
+
+**Simulatieprofielen (april, België):**
+- S0 solar: sinus-curve 07:00–19:00, piek 4000 W, ±10% ruis
+- S0 SCH afname: 500 W basis + ochtendspits +1800 W, avondspits +2200 W, nacht +800 W
+- S0 SCH injectie: max(0, solar − afname)
+- P1 WON afname: 400 W basis + spitsprofielen, geen injectie in simulatie
+
+### 11.2 Kritische defines (bovenaan sketch v1.26)
 
 ```cpp
-#define Serial Serial0  // VERPLICHT ESP32-C6
+#define Serial Serial0   // VERPLICHT ESP32-C6 RISC-V
 
-#define VERSION        "Smart Energy v0.1"
-#define HOSTNAME       "ESP32_SMART_ENERGY"
-#define MY_IP          "192.168.0.73"
+#define FW_VERSION   "1.26"
+#define CTRL_ID      "S-ENERGY"
+#define NVS_NS       "senrg"
 
-// S0 pinnen
-#define S0_SOLAR_PIN   3
-#define S0_WON_PIN     4
-#define S0_SCH_PIN     5
+// S0 pinnen — Roomsense RJ45 connector op Zarlar shield
+#define S0_SOL_PIN    5   // IO5 — Zonnepanelen A14 forward (klem 18/19)
+#define S0_SCHF_PIN   6   // IO6 — Schuur A5 afname forward (klem 18/19)
+#define S0_SCHR_PIN   7   // IO7 — Schuur A5 injectie reverse (klem 20/21)
 
-// S0 configuratie (te lezen van label teller, AP2)
-#define PULSEN_PER_KWH 1000
-#define WH_PER_PULS    (1000.0 / PULSEN_PER_KWH)
+// LED matrix — WS2812B 12×4 = 48 pixels, serpentine
+#define LED_PIN      10   // IO10 via 330Ω, Pixel-line connector
+#define MATRIX_COLS  12
+#define MATRIX_ROWS   4
+#define NUM_PIXELS   48
+#define DEF_BRIGHT   55
 
-// LED strip
-#define LED_PIN        10
-#define LED_COUNT      8
+// S0 configuratie — Inepro PRO380-S
+#define WH_PER_PULS    0.1f        // 0,1 Wh/imp = 10.000 imp/kWh
+#define WATT_FACTOR    360000.0f   // P(W) = 360.000 / interval_ms
+#define POWER_TO_MS    180000UL    // 3 min geen puls → P = 0 W
 
 // Netwerk
-#define ECO_BOILER_IP  "192.168.0.71"
-#define ZARLAR_IP      "192.168.0.60"
-#define NTFY_TOPIC     "zarlardinge-energy"
-#define ENTSO_TOKEN    ""  // aan te vragen op transparency.entsoe.eu
+#define DEF_IP       "192.168.0.73"
+#define RPI_BASE     "http://192.168.0.50:3000"  // RPi Node.js portal
+#define NTP_SRV      "pool.ntp.org"
 
-// Drempelwaarden (ook via /settings + NVS)
-#define DREMPEL_OVERSCHOT_W   200
-#define DREMPEL_GOEDKOOP      0.05  // EUR/kWh
-#define DREMPEL_DUUR          0.25  // EUR/kWh
-#define DREMPEL_PIEK          0.40  // EUR/kWh
+// EPEX — vaste opslag (Fluvius Imewo + Ecopower)
+#define VAST_CT_KWH   14.32f   // ct/kWh opslag bovenop EPEX spotprijs
+
+// Simulatie — april-profiel België
+#define SIM_SOLAR_PEAK_W  4000.0f
+#define SIM_BASE_LOAD_W    500.0f
+#define SIM_WON_BASE_W     400.0f
+#define SIM_TICK_S           5.0f
 ```
 
-### 11.3 Pagina-structuur
+⚠️ **Niet meer van toepassing:** ENTSO-E API, LED-strip 8 pixels, ntfy.sh, Cloudflare Worker.
+EPEX-data komt via de RPi (`/api/epex`), niet rechtstreeks van ENTSO-E.
 
-| URL | Inhoud | Toegang |
-| --- | --- | --- |
-| `/` | Dashboard: solar/WON/SCH/overschot + EPEX prijs + LED status | Lokaal + remote |
-| `/charts` | Grafieken: vermogen 24h + EPEX prijscurve 24h | Lokaal + remote |
-| `/settings` | Drempelwaarden, EPEX, notificaties, LED-dimmer | Lokaal + token |
-| `/json` | Compact JSON voor Zarlar Dashboard | Lokaal + remote |
-| `/update` | OTA firmware-update | Lokaal enkel |
-| `/log` | SPIFFS debug.log | Lokaal enkel |
-| `/restart` | Controller herstarten | Lokaal enkel |
+### 11.3 Pagina-structuur (v1.26)
 
-### 11.4 JSON /json endpoint — volledige en definitieve key-lijst
+| URL | Inhoud |
+| --- | --- |
+| `/` | Live status: solar/SCH/WON/netto/EPEX + sim-banners |
+| `/json` | Compact JSON voor Dashboard + RPi polling |
+| `/settings` | SIM_S0 checkbox, SIM_P1 checkbox + P1-IP, LED helderheid, max piek |
+| `/update` | OTA firmware |
+| `/reset_dag` | Dagcumulatieven resetten |
+| `/reset_piek` | Maandpiek resetten |
+| `/reboot` | Herstart |
+| `/factory_reset` | NVS wissen + herstart |
 
-Dit is de **enige referentie** voor alle /json keys. Sectie 9.1 (GAS-kolommen)
-en sectie 16.4 (Sheets-architectuur) zijn hierop gebaseerd.
+### 11.4 JSON /json endpoint — actuele key-lijst v1.26
 
-**Real-time vermogen:**
+Dit is de **enige referentie** voor alle /json keys. GAS-script §9.1 en matrix §11.6 zijn hierop gebaseerd.
 
-| Key | Beschrijving | Eenheid |
-| --- | --- | --- |
-| a | Solar vermogen huidig | W |
-| b | Verbruik WON huidig | W |
-| c | Verbruik SCH huidig | W |
-| d | Overschot (a-b-c, negatief = tekort) | W |
-
-**Dagcumulatieven — energie (kWh):**
+**Real-time vermogen (W):**
 
 | Key | Beschrijving | Eenheid |
 | --- | --- | --- |
-| h | Solar productie dag | Wh |
-| i | WON verbruik dag bruto | Wh |
-| j | SCH verbruik dag bruto | Wh |
-| v | Injectie naar net dag | Wh |
+| `a` | Solar vermogen huidig | W |
+| `b` | WON vermogen huidig (P1, + = afname, − = injectie) | W |
+| `c` | SCH afname huidig | W |
+| `d` | SCH injectie huidig | W |
+| `e` | Netto SCH (+ = injectie naar net) | W |
 
-**Dagcumulatieven — kost dynamisch tarief (EPEX):**
-
-| Key | Beschrijving | Eenheid |
-| --- | --- | --- |
-| q | Kost WON dag — dynamisch | EUR x100 (int) |
-| r | Kost SCH dag — dynamisch | EUR x100 (int) |
-| s | Solar opbrengst dag — dynamisch | EUR x100 (int) |
-
-**Dagcumulatieven — kost vast tarief (vergelijking):**
+**Dagcumulatieven (Wh):**
 
 | Key | Beschrijving | Eenheid |
 | --- | --- | --- |
-| qv | Kost WON dag — vast tarief | EUR x100 (int) |
-| rv | Kost SCH dag — vast tarief | EUR x100 (int) |
-| sv | Solar opbrengst dag — vast tarief | EUR x100 (int) |
+| `h` | Solar productie dag | Wh |
+| `i` | WON afname dag (P1) | Wh |
+| `j` | SCH afname dag | Wh |
+| `k` | SCH injectie dag | Wh |
+| `vw` | WON injectie dag (P1) | Wh |
 
-**EPEX-prijzen:**
-
-| Key | Beschrijving | Eenheid |
-| --- | --- | --- |
-| n | EPEX prijs huidig kwartier | EUR/kWh x1000 (int) |
-| n2 | EPEX prijs volgend kwartier | EUR/kWh x1000 (int) |
-| nv | Vast tarief geconfigureerd | EUR/kWh x1000 (int) |
-
-**Vermogenpiek huidige maand:**
+**EPEX-prijzen (all-in):**
 
 | Key | Beschrijving | Eenheid |
 | --- | --- | --- |
-| pt | Piek gecombineerde netto afname (basis capaciteitstarief) | W (int) |
-| pw | Piek netto afname WON individueel | W (int) |
-| ps | Piek netto afname SCH individueel | W (int) |
+| `n` | EPEX all-in nu (EPEX + vaste opslag) | ct/kWh × 100 |
+| `n2` | EPEX all-in +1u | ct/kWh × 100 |
 
-**Sturings- en systeemstatus:**
+**Vermogenpiek maand:**
 
 | Key | Beschrijving | Eenheid |
 | --- | --- | --- |
-| e | ECO-boiler aan/uit (fase 2) | 0/1 |
-| f | Tesla laden aan/uit (fase 2) | 0/1 |
-| g | Override actief | 0/1 |
-| o | LED-strip helderheid (0–100%, instelbaar) | int |
-| p | Laatste push verstuurd (unix timestamp) | int |
-| eod | End-of-day vlag (00:00–00:05) | 0/1 |
-| ac | WiFi RSSI | dBm |
-| ae | Heap largest block | bytes |
+| `pt` | Maandpiek gecombineerde netto afname | W |
 
-### 11.5 S0-pulsmeting principe
+**Simulatievlaggen:**
+
+| Key | Beschrijving | Waarden |
+| --- | --- | --- |
+| `sim_s0` | S0 kanalen gesimuleerd | 1 = SIM / 0 = LIVE hardware |
+| `sim_p1` | P1 dongle gesimuleerd | 1 = SIM / 0 = LIVE HomeWizard |
+
+**Systeem:**
+
+| Key | Beschrijving | Eenheid |
+| --- | --- | --- |
+| `ac` | WiFi RSSI | dBm |
+| `ae` | Heap largest block | bytes |
+| `ver` | Firmware versie | string |
+
+> ⚠️ **Vervallen keys** (waren gepland in v0.x, niet geïmplementeerd in v1.26):
+> `q`, `qv`, `r`, `rv`, `s`, `sv`, `v`, `nv`, `pw`, `ps`, `eod`, `e` (ECO), `f` (Tesla), `g`, `o`, `p`
+> Deze worden eventueel herintroduceerd in v1.27+ als de betreffende functionaliteit gebouwd wordt.
+
+### 11.5 S0-pulsmeting principe (v1.26 — ISR-gedreven)
 
 ```cpp
-volatile uint32_t cnt_solar = 0;
-volatile uint32_t cnt_won   = 0;
-volatile uint32_t cnt_sch   = 0;
-volatile uint32_t ts_solar  = 0;  // timestamp laatste puls (ms)
-volatile uint32_t ts_won    = 0;
-volatile uint32_t ts_sch    = 0;
+// ISR — IRAM_ATTR verplicht voor ESP32-C6
+void IRAM_ATTR isrSol() {
+  unsigned long n = millis();
+  if (isr_sol_last) isr_sol_iv = n - isr_sol_last;  // interval voor vermogen
+  isr_sol_last = n; isr_sol_cnt++;
+}
 
-void IRAM_ATTR isr_solar() { cnt_solar++; ts_solar = millis(); }
-void IRAM_ATTR isr_won()   { cnt_won++;   ts_won   = millis(); }
-void IRAM_ATTR isr_sch()   { cnt_sch++;   ts_sch   = millis(); }
+// 5s tick — vermogen berekenen
+float calcW(unsigned long iv, unsigned long last_ms) {
+  if (!last_ms || (millis() - last_ms) > POWER_TO_MS || !iv) return 0.0f;
+  return WATT_FACTOR / (float)iv;  // W = 360.000 / interval_ms
+}
 
-// Elke seconde: vermogen berekenen uit pulsen
-// vermogen_W = cnt_per_sec * WH_PER_PULS * 3600.0
-// Als laatste puls > 30s geleden: vermogen = 0 (stilstand)
+// Delta pulsen → Wh dagcumulatief
+wh_sol += (cs - prev_sol) * WH_PER_PULS;  // 0,1 Wh/puls
 ```
+
+Pinnen worden altijd als `INPUT` geregistreerd (geen interne pull-up — externe 4,7kΩ op PCB).
+Interrupts worden altijd geregistreerd, ook in SIM-modus (de pinnen pulseren dan gewoon niet).
+
+### 11.6 LED Matrix 12×4 WS2812B (v1.26)
+
+**Hardware:**
+- 48 pixels WS2812B, serpentine layout (rij 0: L→R, rij 1: R→L, enz.)
+- Connector: Pixel-line JST SM 3-pin (wit=DI, rood=+5V, blauw=GND)
+- Voeding: aparte 5V/2A — NIET via shield PTC (te zwak)
+- Data: IO10 via 330Ω serieweerstand
+
+**Kolomlabels (voor op behuizing):**
+
+| Col | Label | Inhoud |
+| --- | --- | --- |
+| 0 | SOL W | Solar vermogen (groen, 0–6000 W) |
+| 1 | SOL kWh | Solar dag totaal (geel-groen, 0–30 kWh) |
+| 2 | SCH AF | SCH afname (rood, 0–10000 W) |
+| 3 | SCH INJ | SCH injectie (cyaan, 0–6000 W) |
+| 4 | NETTO | Groen=injectie / Rood=afname |
+| 5 | WON W | WON vermogen (amber, 0–5000 W) |
+| 6 | EPEX | EPEX prijs nu (groen/geel/rood) |
+| 7 | EPEX+1 | EPEX prijs +1u |
+| 8 | PIEK% | Maandpiek % van max |
+| 9 | KOKEN? | Groen = goed moment (EPEX < 15 ct) |
+| 10 | WASSEN? | Zelfde logica als KOKEN? |
+| 11 | HEAP | Geheugen ESP32 (groen/amber/rood) |
+
+> ⚠️ **Verschil met EMS v1.5:** het document beschreef een LED-strip van 8 pixels in 5 groepen.
+> De werkelijke implementatie is een **12×4 matrix van 48 pixels** — wezenlijk anders.
+
+**Sim-indicator:** col 0 rij 0 knippert rood als SIM_S0 actief · col 1 rij 0 als SIM_P1 actief.
 
 ---
 
@@ -928,27 +945,22 @@ void IRAM_ATTR isr_sch()   { cnt_sch++;   ts_sch   = millis(); }
 ### Fase 1 — Meten, leren en adviseren (nu te realiseren)
 
 Doel: een werkende "energiecoach" die meet en adviseert, maar nog niets automatisch stuurt.
-Dit laat Maarten, Celine, Filip en Mireille toe hun leefpatroon te begrijpen en aan te passen
-vóór de digitale meter verplicht wordt in 2028.
 
-| Stap | Taak | Afhankelijkheid |
+| Stap | Taak | Status |
 | --- | --- | --- |
-| 1.1 | Interface PCB ontwerpen in Eagle + bestellen JLCPCB | --- |
-| 1.2 | UTP kabel trekken van verdeelkast naar inkomhal | --- |
-| 1.3 | Sketch v0.1: S0-pulsmeting + vermogensberekening | ECO v1.23 als basis |
-| 1.4 | Sketch v0.1: UI dashboard solar/WON/SCH/overschot | 1.3 |
-| 1.5 | Sketch v0.1: /json endpoint + OTA + logging | 1.4 |
-| 1.6 | Zarlar Dashboard: polling 192.168.0.73 toevoegen | 1.5 |
-| 1.7 | GAS script aanmaken voor Smart Energy logging | 1.6 |
-| 1.8 | Sketch v0.2: EPEX data ophalen + UI grafiek | 1.4 |
-| 1.9 | Sketch v0.2: EPEX in JSON key n | 1.8 |
-| 1.10 | Sketch v0.3: LED-strip 8 pixels (WS2812B) | 1.8 |
-| 1.11 | Sketch v0.3: ntfy.sh push-notificaties | 1.8 |
-| 1.12 | Cloudflare Worker uitbreiden voor remote /json + UI | 1.5 |
-| 1.13 | Matrix rij S-ENERGY activeren in Dashboard | 1.6 |
-
-Volgorde van uitvoering: 1.1 en 1.2 kunnen parallel aan de sketch-ontwikkeling.
-Start met 1.3-1.5 (meten en loggen), daarna 1.8-1.11 (EPEX + LED + push).
+| 1.1 | Interface PCB ontwerpen in Eagle + bestellen JLCPCB | ⬜ Open |
+| 1.2 | UTP kabel trekken van verdeelkast naar inkomhal | ⬜ Open |
+| 1.3 | Sketch v1.26: S0-pulsmeting + simulatiemodus SIM_S0 | ✅ Klaar |
+| 1.4 | Sketch v1.26: UI dashboard solar/SCH/WON/EPEX | ✅ Klaar |
+| 1.5 | Sketch v1.26: /json endpoint + OTA + NVS | ✅ Klaar |
+| 1.6 | Dashboard v5.8: S-ENERGY rij 2 matrix geactiveerd | ✅ Klaar |
+| 1.7 | GAS script v1: 19 kolommen A–S, sim-vlaggen gelogd | ✅ Klaar |
+| 1.8 | EPEX data via RPi /api/epex (niet ENTSO-E direct) | ✅ Klaar |
+| 1.9 | LED matrix 12×4 WS2812B, 48 pixels | ✅ Klaar |
+| 1.10 | RPi portal: /api/poll/senrg + matrix.html + S-ENERGY tegel | ✅ Klaar |
+| 1.11 | SIM_P1: HomeWizard P1 integratie klaar in sketch (wacht op hardware) | ✅ Klaar (LIVE in 2028) |
+| 1.12 | S0 bekabeling aansluiten → SIM_S0 uitschakelen | ⬜ Open (na PCB) |
+| 1.13 | ntfy.sh push-notificaties | ⬜ Open (v1.27) |
 
 ### Fase 2 — Adviseren + sturen (na ~6 maanden observatie)
 
@@ -1459,23 +1471,449 @@ Sketch v0.3 (LED + push):
 
 ## 15. Versiegeschiedenis
 
-| Versie | Datum | Wijzigingen |
-| --- | --- | --- |
-| **v1.4** | April 2026 | Sectie 7 uitgebreid: 4 grafieken op zelfde tijdas (solar, batterij SOC, net import/export), correcte BTW-berekening op volledige som, 5 instelbare tariefcomponenten, infokaarten dagkost en dynamisch vs vast, 48u rolling window cache-fix (start 00:00) |
-| **v1.3** | April 2026 | Sectie 5 herschreven: 12 LED pixels, 5 groepen, advies-pixels voor Céline/Mireille. Sectie 7 volledig herschreven: reële prijsstructuur (EPEX + vaste opslag), plannings-UI met chronologische tabel, manueel/automatisch onderscheid, piekbeheer, override-knoppen, simulatie met SOC, verwijzing naar live testpagina. Vermogens WP gecorrigeerd naar 2.5 kW elektrisch. EVs: 9 kW, energy sharing 6 kW. |
-| **v1.2** | April 2026 | Sectie 7: energy-charts.info API, 48u rolling window, 3 prijsklassen, arbitrageperiodes, localStorage cache, ESP32 /epex endpoint |
-
-
 | Versie | Datum | Inhoud |
 | --- | --- | --- |
 | v0.1 | April 2026 | Initieel document op basis van projectdocument v0.7 |
-| v0.2 | April 2026 | Geintegreerd met Zarlar Master Overnamedocument: IP 192.168.0.73, matrix, GAS-script, pinout, S0-code, JSON-keys, fasering |
-| v0.3 | April 2026 | Gedetailleerd uitgewerkt plan: locatie inkomhal, PCB Eagle/JLCPCB, LED-strip 8px legende, ntfy.sh, Cloudflare Tunnel, EPEX ENTSO-E API, fasering 1-2-3 |
-| v0.4 | April 2026 | Sectie 16 herschreven: NVS-strategie stroombeveiligd (elke 15 min), twee GAS-tabbladen Data+Verbruik, capaciteitstarief meting en simulatie, SPIFFS dagarchief 20+ jaar, midnight GAS-trigger, /history pagina, volledige kolommen- en key-definitie |
-| v0.5 | April 2026 | Piek vermogen gesplitst in piek_won en piek_sch: aparte NVS-keys, JSON-keys pw/ps, GAS-kolommen, /history pagina, berekening via proportionele solar verdeling per huishouden |
-| v0.6 | April 2026 | Een aansluiting verduidelijkt, gecombineerde capaciteitspiek pt, dubbel tariefvergelijk dynamisch/vast |
-| v0.7 | April 2026 | JSON-keys, GAS-kolommen en SPIFFS geconsolideerd: §11.4 = enige JSON-referentie, §9.1 = enige GAS-Data-referentie. Duplicaten verwijderd. |
-| v0.8 | April 2026 | (zie v0.9) |
-| v0.9 | April 2026 | Schema S0-interface gecorrigeerd: voeding LED-zijde van 3.3V ESP32-kant, niet van teller. |
-| v1.0 | April 2026 | S0-schema herschreven naar Aanpak A (IEC 62053-31), SMA SB3.6-1AV-41 westdak specs, Viessmann 275Wp installatie volledig uitgewerkt. |
-| v1.1 | April 2026 | Correcties: partitions_16mb.csv exacte naam, sketch v0.0 (nog te schrijven), Matter niet actief, ALFASUN spelling, WP types uit factuur Frigro 430955 (WH-UX09HE5 + WH-SXC09H3E5), westdak = SB3.6-1AV-41 (niet SB2.5-1VL-40) — totaal omvormersvermogen 10.880W. (directe verbinding, geen optocoupler): onderbouwd via IEC 62053-31 interne isolatie. Componentenlijst aangepast (geen EL817S, wel 10nF HF-filter). Zonne-installatie volledig uitgewerkt: 32+12 panelen Viessmann Vitovolt 300 275Wp, SB3600TL-21 specs, SB2.5-1VL-40 specs, vermogensbalans, bezettingsgraad. AP2b en AP2c toegevoegd. | WP WON/SCH toegevoegd aan stuurbare verbruikers. PCB: 4 kanalen SMD EL817S SOP-4, 40x40mm 2x2 paneel JLCPCB. Verbinding via RJ45 (Roomsense/Option shield). LED-strip: alle 8 permanent, elk eigen aspect (solar/balans/EPEX nu+straks/ECO/EV/advies/systeem). Push 3 niveaus configureerbaar, standaard enkel URGENT. UI: visuele banner prioriteit boven push. Matrix rij 2 spiegelt LED-aspecten. |
+| v0.2 | April 2026 | Geïntegreerd met Zarlar Master Overnamedocument: IP 192.168.0.73, matrix, GAS-script, pinout, S0-code, JSON-keys, fasering |
+| v0.3 | April 2026 | Gedetailleerd uitgewerkt plan: locatie inkomhal, PCB Eagle/JLCPCB, LED-strip, ntfy.sh, Cloudflare, EPEX ENTSO-E API, fasering 1-2-3 |
+| v0.4 | April 2026 | Sectie 16: NVS-strategie, twee GAS-tabbladen Data+Verbruik, capaciteitstarief, SPIFFS dagarchief, /history pagina |
+| v0.5 | April 2026 | Piekvermogens gesplitst in piek_won / piek_sch, proportionele solar verdeling per huishouden |
+| v0.6 | April 2026 | Één aansluiting verduidelijkt, gecombineerde piek pt, dubbel tariefvergelijk dynamisch/vast |
+| v0.7 | April 2026 | JSON-keys en GAS-kolommen geconsolideerd: §11.4 en §9.1 als enige referentie. Duplicaten verwijderd. |
+| v0.9 | April 2026 | S0-schema gecorrigeerd naar Aanpak A (IEC 62053-31, directe verbinding zonder optocoupler) |
+| v1.0 | April 2026 | SMA SB3.6-1AV-41 westdak specs, Viessmann 275Wp installatie volledig uitgewerkt |
+| v1.1 | April 2026 | ALFASUN, WP types (WH-UX09HE5 + WH-SXC09H3E5) uit Frigro factuur, partitions exacte naam, sketch v0.0 |
+| v1.2 | April 2026 | Sectie 7: energy-charts.info API, 48u rolling window, prijsklassen, localStorage cache, ESP32 /epex endpoint |
+| v1.3 | April 2026 | Sectie 5: 12 LED pixels in 5 groepen, advies-pixels voor Céline/Mireille. Sectie 7: reële prijsstructuur, planningstabel, piekbeheer, SOC-simulatie, live testpagina |
+| v1.4 | April 2026 | Sectie 7: 4 grafieken op zelfde tijdas, BTW op volledige som, 5 instelbare tariefcomponenten, infokaarten, cache-fix 00:00 |
+| **v1.6** | April 2026 | §1 controllers bijgewerkt (v1.26 actief, Dashboard v5.8, RPi v2.0). §11.1–11.6 volledig herschreven: twee sim-vlaggen, actuele pins, LED matrix 12×4, JSON keys v1.26. §12 fasering bijgewerkt. §17 RPi gateway vervangen door §18 RPi Portal (Node.js, Tailscale). §19 HomeWizard P1 dongle toegevoegd. §20 EPEX injectieberekening toegevoegd. |
+| **v1.5** | April 2026 | Sectie 17 toegevoegd: Raspberry Pi Gateway (nginx + cloudflared). |
+
+---
+
+## 17. Remote toegang — Tailscale (actueel, april 2026)
+
+> ⚠️ **§17 is vervangen door de werkelijke implementatie.** De geplande nginx+cloudflared aanpak
+> (EMS v1.5) is **niet gerealiseerd**. In plaats daarvan draait de RPi Node.js + Tailscale.
+> De originele §17 installatie-instructies zijn bewaard onderaan dit document als historische referentie.
+
+**Actuele situatie:**
+
+| Component | Waarde |
+| --- | --- |
+| Hardware | Raspberry Pi, vaste IP `192.168.0.50` |
+| Software | Node.js v18 + Express, poort 3000 |
+| Remote toegang | **Tailscale** VPN (`100.123.74.113`) — werkt overal |
+| Deploy | `bash ~/deploy.sh "omschrijving"` op Mac |
+
+**Tailscale gebruikers:**
+
+| Gebruiker | Status |
+| --- | --- |
+| Filip + Mireille | ✅ Verbonden (gedeeld Apple account) |
+| Maarten | ⬜ Nog uit te nodigen |
+| Céline | ⬜ Nog uit te nodigen |
+
+Portal bereikbaar via: `http://100.123.74.113:3000`
+
+---
+
+## 18. RPi Portal — Node.js server v2.0
+
+### 18.1 Architectuur
+
+De RPi is een **display + controle laag** — hij meet niets zelf.
+De **Dashboard controller (192.168.0.60) blijft de bron van waarheid** voor Google Sheets logging.
+
+```
+Browser (overal via Tailscale)
+        ↓
+RPi Node.js :3000  (/api/poll/senrg, /api/epex, /api/matrix, ...)
+        ↓
+ESP32 controllers (192.168.0.70–.80) + Photons (via Cloudflare Worker)
+```
+
+**Gouden regel:** de browser gebruikt NOOIT lokale IPs — alles via `/api/` op de RPi.
+
+### 18.2 API endpoints
+
+| Endpoint | Functie |
+| --- | --- |
+| `GET /api/poll/senrg` | Poll S-ENERGY /json |
+| `GET /api/poll/eco` | Poll ECO /json |
+| `GET /api/poll/hvac` | Poll HVAC /json |
+| `GET /api/epex` | EPEX België spotprijzen (gecached) |
+| `GET /api/matrix` | Alle controllers parallel (ESP32 + Photons) |
+| `GET /api/photon/:id` | Photon proxy via Cloudflare Worker |
+| `GET /api/settings` | Persistente instellingen laden |
+| `POST /api/settings` | Instelling opslaan |
+| `GET /api/status` | Status alle controllers |
+
+### 18.3 Portal pagina's
+
+| Pagina | URL | Status |
+| --- | --- | --- |
+| Portal overzicht | `/` (index.html) | ✅ Actief |
+| ECO Boiler detail | `/eco.html` | ✅ Actief |
+| EPEX grafiek | `/epex-grafiek.html` | ✅ Actief |
+| Live matrix | `/matrix.html` | ✅ Actief |
+| HVAC detail | `/hvac.html` | ⬜ Gepland |
+| Afrekening WON/SCH | `/afrekening` | ⬜ Gepland |
+
+### 18.4 S-ENERGY integratie in de portal
+
+**index.html — S-ENERGY tegel:**
+- Toont: solar W (boog), netto W (kleur), EPEX ct, sim-badge (oranje/groen)
+- Linkt naar: `/matrix.html`
+- Demodata bij server offline: `senrg: {a:2800, e:350, n:1820, sim_s0:1, sim_p1:1}`
+
+**epex-grafiek.html — Injectie kaart:**
+- Derde info-kaart "☀️ Injectie vandaag" met kWh + € opbrengst
+- Badge toont: `S0:SIM · P1:SIM` / `S0:LIVE · P1:SIM` / `S0:LIVE · P1:LIVE`
+- Data via `pollSenrg()` elke 30s — valt terug op simulatie als offline
+
+**matrix.html — Rij 2 S-ENERGY:**
+- 16 pixels conform `renderEnergyRow()` in Dashboard v5.8
+- Col 12 oranje = SIM_S0 actief · col 13 oranje = SIM_P1 actief
+- Auto-refresh 15s, Photon fallback voor kamers automatisch
+
+### 18.5 Deploy workflow
+
+```bash
+# Alle bestanden naar ~/Downloads kopiëren, dan:
+bash ~/deploy.sh "omschrijving van wijziging"
+```
+
+`deploy.sh` doet automatisch: git commit → push → SSH naar RPi → rsync → herstart indien server.js gewijzigd.
+
+---
+
+## 19. HomeWizard P1 Meter — HWE-P1-RJ12
+
+> WON-verbruik fase 1: **niet gemeten** (analoge teller).
+> De P1-dongle integratie is klaar in de sketch maar wacht op hardware (~2028).
+
+### 19.1 Hardware
+
+| Parameter | Waarde |
+| --- | --- |
+| Model | HomeWizard P1 Meter **HWE-P1-RJ12** |
+| Aansluiting | RJ12 op P1-poort digitale slimme meter (WON) |
+| Voeding | 5V 500mA via P1-poort (geen externe voeding) |
+| WiFi | 2.4 GHz, via HomeWizard Energy app |
+
+### 19.2 Activatie lokale API
+
+1. Installeer de HomeWizard Energy app
+2. Koppel de P1 Meter aan het WiFi-netwerk
+3. Ga naar: Settings → Meters → jouw meter → **Local API: AAN**
+4. Vul het IP-adres in bij S-ENERGY `/settings` → "P1 IP-adres"
+
+### 19.3 API endpoint
+
+```
+GET http://<P1_IP>/api/v1/data
+```
+Plain HTTP, geen authenticatie, geen cloud vereist.
+Documentatie: https://api-documentation.homewizard.com/docs/introduction/
+GitHub library: https://github.com/jvandenaardweg/homewizard-energy-api
+
+### 19.4 JSON response → S-ENERGY keys
+
+```json
+{
+  "active_power_w": 997,
+  "total_power_import_t1_kwh": 19055.287,
+  "total_power_import_t2_kwh": 19505.815,
+  "total_power_export_t1_kwh": 0.002,
+  "total_power_export_t2_kwh": 0.007
+}
+```
+
+| P1 JSON key | Betekenis | → S-ENERGY /json key |
+| --- | --- | --- |
+| `active_power_w` | Momentaan vermogen WON | `b` (W) |
+| `total_power_import_t1+t2_kwh` | Dag afname (via delta midnight) | `i` (Wh) |
+| `total_power_export_t1+t2_kwh` | Dag injectie (via delta midnight) | `vw` (Wh) |
+
+> `total_power_*_kwh` zijn **cumulatieve tellers**. Dagwaarden = actuele waarde − snapshot bij midnight.
+
+---
+
+## 20. EPEX Injectieberekening — Ecopower
+
+### 20.1 Principe (conform factuur Geert Van Leuven, feb. 2026)
+
+Bij het **dynamisch Ecopower-tarief** geldt voor teruglevering aan het net:
+
+```
+Injectieprijs (ct/kWh) = EPEX spotprijs − onbalansafslag
+                       = max(0, EPEX − 0,67 ct/kWh)
+BTW op injectie        = 0%   (tegenover 6% op afname)
+```
+
+**Gemeten in feb. 2026:** gem. injectieprijs = 5,25 ct/kWh (EPEX gem. ~5,92 − afslag 0,67).
+
+**Bij negatieve EPEX-prijs:** injectieprijs = 0 ct/kWh (vloer — je krijgt niets).
+
+**Wat er NIET vergoed wordt bij injectie:**
+- Afnametarief (5,23 ct/kWh) — enkel bij afname
+- GSC (1,10 ct/kWh) — enkel bij afname
+- WKK (0,39 ct/kWh) — enkel bij afname
+- Heffingen + accijnzen (~4,94 ct/kWh) — enkel bij afname
+
+### 20.2 Toepassing in epex-grafiek.html
+
+De onbalansafslag is instelbaar via de Instellingen tab (standaard 0,67 ct/kWh):
+
+```javascript
+// Injectieprijs per slot (EPEX-gebaseerd, 0% BTW)
+const injCt = Math.max(0, epexCt - ONBALANS_CT);
+
+// Kost dynamisch contract per slot:
+kostDyn += afname   * reelePrijs(epexCt) / 100;  // afname: all-in tarief
+kostDyn -= injectie * injCt              / 100;  // injectie: EPEX − afslag
+```
+
+### 20.3 Vergelijking contracten
+
+| | Dynamisch | Vast | Injectie |
+| --- | --- | --- | --- |
+| Energieprijs | EPEX spotprijs | ~12,80 ct/kWh | EPEX spotprijs |
+| Afnametarief | 5,23 ct/kWh | 5,23 ct/kWh | **niet van toepassing** |
+| GSC | 1,10 ct/kWh | 1,10 ct/kWh | **niet van toepassing** |
+| WKK | 0,39 ct/kWh | 0,39 ct/kWh | **niet van toepassing** |
+| Heffingen | 4,94 ct/kWh | 4,94 ct/kWh | **niet van toepassing** |
+| BTW | 6% | 6% | **0%** |
+| Onbalans | toeslag (afname) | — | **aftrek 0,67 ct/kWh** |
+
+> 💡 Injecteren levert slechts ~5,25 ct/kWh op tegenover ~28 ct/kWh afnameprijs.
+> **Zelf verbruiken of opslaan in batterij is altijd beter dan injecteren.**
+
+---
+
+## 21. GAS Script — ENERGY_GoogleScript_v1
+
+### 21.1 Structuur
+
+19 kolommen (A t/m S), logging via Dashboard controller (192.168.0.60).
+
+| Kolom | Inhoud | Bron key |
+| --- | --- | --- |
+| A | Tijdstempel | — |
+| B | Solar W | `a` |
+| C | SCH afname W | `c` |
+| D | SCH injectie W | `d` |
+| E | Netto SCH W | `e` |
+| F | WON W | `b` |
+| G | Solar dag kWh | `h` / 1000 |
+| H | SCH afname dag kWh | `j` / 1000 |
+| I | SCH injectie dag kWh | `k` / 1000 |
+| J | WON afname dag kWh | `i` / 1000 |
+| K | WON injectie dag kWh | `vw` / 1000 |
+| L | EPEX nu ct/kWh | `n` / 100 |
+| M | EPEX +1u ct/kWh | `n2` / 100 |
+| N | Maandpiek W | `pt` |
+| O | RSSI dBm | `ac` |
+| P | Heap KB | `ae` / 1024 |
+| Q | SIM S0 (0/1) | `sim_s0` — **oranje header** |
+| R | SIM P1 (0/1) | `sim_p1` — **oranje header** |
+| S | FW versie | `ver` |
+
+### 21.2 Functies
+
+- `doPost(e)` — logt één meting, handelt ontbrekende keys af
+- `setupHeaders()` — 2 bevroren rijen, kolomtitels, oranje sim-kolommen
+- `test()` — realistische testdata v1.26
+- `sendDailySummary()` — dagelijkse e-mail met **waarschuwing als sim-data aanwezig**
+
+MAX_ROWS = 2000 (≈ 6 maanden bij 5-min interval).
+
+---
+
+## 22. Dashboard v5.8 — S-ENERGY integratie
+
+### 22.1 Wijzigingen t.o.v. v5.7
+
+| Wat | Wijziging |
+| --- | --- |
+| Controller tabel idx 4 | FUT1 → S-ENERGY, active=true |
+| MROW rij 2 | `{-1,-1,-1}` → `{-1,-1,4}` (S-ENERGY) |
+| `renderEnergyRow()` | Nieuw — 16 kolommen |
+| `updateMatrix()` | `else if S-ENERGY` toegevoegd |
+
+### 22.2 renderEnergyRow — kolomlogica
+
+| Col | Inhoud | Kleurschaal |
+| --- | --- | --- |
+| 0 | Status | groen/amber/rood |
+| 1–4 | Solar W / SCH af / SCH inj / Netto | gradient groen/rood/cyaan |
+| 5 | WON W | amber gradient |
+| 6–8 | Solar kWh / SCH af kWh / SCH inj kWh | dag cumulatieven |
+| 9–10 | EPEX nu / +1u | groen(<15)/geel(<25)/rood(>35 ct) |
+| 11 | Maandpiek % | groen(<60%)/amber(<85%)/rood |
+| 12 | sim_s0 | **oranje=SIM / groen=LIVE** |
+| 13 | sim_p1 | **oranje=SIM / groen=LIVE** |
+| 14–15 | Heap / RSSI | groen/amber/rood |
+
+> Dit document vervangt de historische §17 installatie-instructies voor nginx+cloudflared.
+> Die zijn niet meer relevant voor de huidige Tailscale+Node.js aanpak.
+
+*Energy Management System — Filip Delannoy — bijgewerkt april 2026*
+
+De Raspberry Pi fungeert als **permanente brug** tussen het internet en alle lokale
+Zarlar-controllers. Hij meet niets, stuurt niets aan — hij is uitsluitend een veilige
+en betrouwbare doorgang. Dit vervangt de Cloudflare Worker aanpak uit §6 (die Worker
+kon het lokale netwerk niet rechtstreeks bereiken).
+
+```
+[Buiten — overal ter wereld]        [Lokaal netwerk Zarlardinge]
+
+Telefoon Filip                 →    Pi Gateway (192.168.0.50)
+Telefoon Maarten               →      |
+Browser (overal)               →    nginx reverse proxy
+                                      |         |         |
+                               HVAC(.70)  ECO(.71)  SENRG(.73)
+                               ROOM(.80)  DASH(.60)  ...
+```
+
+De tunnel loopt altijd **outbound** van de Pi naar Cloudflare.
+Geen open poorten op de Telenet-router. Geen DynDNS nodig.
+Alle bestaande controllers blijven ongewijzigd — enkel de Pi heeft extra software.
+
+### 17.2 Hardware
+
+| Parameter | Waarde |
+| --- | --- |
+| Model | Raspberry Pi Zero 2W (voorkeur) of Pi 3/4 |
+| OS | Raspberry Pi OS Lite 64-bit (Bookworm) — geen desktop |
+| Vaste IP | 192.168.0.50 (DHCP-reservering op basis van MAC) |
+| Voeding | 5V USB-C, ~1,5W (Pi Zero 2W) |
+| Hostname | zarlar-gateway |
+| SD-kaartje | 16GB+, te schrijven via RPi Imager op Mac (USB-C adapter) |
+
+**Geen Homebridge, geen Node.js, geen npm.** Die complexiteit is precies waarom
+een vorige Pi onverwacht kapotging. Deze Pi draait enkel nginx + cloudflared +
+fail2ban + unattended-upgrades. Totaal RAM-gebruik: ~80 MB.
+
+### 17.3 Software stack
+
+| Component | Type | Gebruik | Onderhoud |
+| --- | --- | --- | --- |
+| nginx | Reverse proxy | Routeert URLs naar juiste controller | Quasi nul |
+| cloudflared | Cloudflare Tunnel | Veilige outbound tunnel naar internet | ~1x/jaar update |
+| systemd | Procesmanager | Auto-start + auto-restart bij crash | Automatisch |
+| unattended-upgrades | OS-updates | Automatisch patchen | Nul |
+| fail2ban | Bruteforce-bescherming | Blokkeert herhaalde mislukte logins | Nul |
+| Python (~50 lijnen) | Health dashboard | Status alle controllers op /status | Eenmalig schrijven |
+
+### 17.4 nginx configuratie
+
+```nginx
+# /etc/nginx/sites-available/zarlar
+server {
+    listen 80;
+    location /hvac/      { proxy_pass http://192.168.0.70/; }
+    location /eco/       { proxy_pass http://192.168.0.71/; }
+    location /senrg/     { proxy_pass http://192.168.0.73/; }
+    location /room/      { proxy_pass http://192.168.0.80/; }
+    location /dashboard/ { proxy_pass http://192.168.0.60/; }
+}
+```
+
+Één bestand. Eén keer instellen. Nieuwe controller = één extra regel + `sudo nginx -s reload`.
+
+### 17.5 Cloudflare Tunnel configuratie
+
+```yaml
+# /etc/cloudflared/config.yml
+tunnel: zarlar-home
+credentials-file: /home/pi/.cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: controllers.zarlardinge.be
+    service: http://localhost:80
+  - service: http_status:404
+```
+
+Cloudflare genereert eenmalig een credentials-bestand bij `cloudflared tunnel create`.
+Daarna opent de Pi zelf de verbinding naar buiten — geen router-configuratie nodig.
+
+### 17.6 URL-structuur na activatie
+
+```
+https://controllers.zarlardinge.be/hvac/        → HVAC controller
+https://controllers.zarlardinge.be/eco/         → ECO Boiler
+https://controllers.zarlardinge.be/senrg/       → Smart Energy
+https://controllers.zarlardinge.be/room/        → Room Eetplaats
+https://controllers.zarlardinge.be/dashboard/   → Zarlar Dashboard
+https://controllers.zarlardinge.be/status       → Health overzicht alle controllers
+https://controllers.zarlardinge.be/eco/update   → OTA firmware van overal
+```
+
+### 17.7 Beveiliging via Cloudflare Access (gratis)
+
+| Endpoint | Toegang |
+| --- | --- |
+| `/*/` — dashboards | Vrij voor Filip + Maarten |
+| `/*/settings` | Vereist login (Google/GitHub) |
+| `/*/update` (OTA) | Enkel Filip |
+| `/status` | Vrij voor Filip + Maarten |
+
+### 17.8 Installatie stap voor stap
+
+**Stap 1 — SD-kaartje (Mac + RPi Imager):**
+```
+OS: Raspberry Pi OS Lite 64-bit (Bookworm)
+Geavanceerde instellingen:
+  Hostname:  zarlar-gateway
+  SSH:       inschakelen + publieke sleutel van Mac
+  WiFi:      SSID + wachtwoord Zarlardinge
+  Locale:    Belgium / nl_BE / Europe/Brussels
+```
+
+**Stap 2 — Basisbeveiliging:**
+```bash
+ssh pi@zarlar-gateway.local
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y unattended-upgrades fail2ban ufw
+sudo ufw allow ssh && sudo ufw allow 80 && sudo ufw enable
+```
+
+**Stap 3 — nginx:**
+```bash
+sudo apt install -y nginx
+# Config schrijven (zie 17.4)
+sudo nginx -t && sudo systemctl enable --now nginx
+```
+
+**Stap 4 — cloudflared:**
+```bash
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb -o cloudflared.deb
+sudo dpkg -i cloudflared.deb
+cloudflared tunnel login
+cloudflared tunnel create zarlar-home
+# Config schrijven (zie 17.5)
+sudo cloudflared service install
+sudo systemctl enable --now cloudflared
+```
+
+### 17.9 Onderhoud
+
+| Taak | Frequentie | Actie |
+| --- | --- | --- |
+| Beveiligingsupdates OS | Automatisch | Nul |
+| cloudflared update | ~1x/jaar | `sudo apt upgrade cloudflared` |
+| nginx uitbreiden | Bij nieuwe controller | 1 regel + `sudo nginx -s reload` |
+| Logs bekijken | Bij probleem | `journalctl -u cloudflared -u nginx` |
+| Reboot na kernel update | ~maandelijks | `sudo reboot` (30 sec downtime) |
+
+### 17.10 Openstaande actiepunten
+
+| # | Actie | Door wie | Status |
+| --- | --- | --- | --- |
+| AP12 | RPi OS Lite installeren op SD (RPi Imager op Mac) | Filip | Open |
+| AP13 | Cloudflare domein configureren (controllers.zarlardinge.be of gelijkaardig) | Filip | Open |
+| AP14 | nginx + cloudflared instellen en testen | Filip | Open |
+| AP15 | Cloudflare Access policies instellen per endpoint | Filip | Open |
+
+> Dit hoofdstuk wordt verder uitgewerkt in een nieuw gesprek zodra de Pi klaar is.
