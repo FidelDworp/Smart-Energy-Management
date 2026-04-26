@@ -352,7 +352,7 @@ Zichtbaar voor Maarten, Céline, Filip en Mireille zonder app te openen.
 
 | Aansluiting | Waarde |
 | --- | --- |
-| ESP32 GPIO | IO10 |
+| ESP32 GPIO | IO4 |
 | Voeding pixels | 5V (rechtstreeks van voeding, niet van ESP32 3.3V!) |
 | GND | Gemeenschappelijk met ESP32 |
 | Data | Via 330 Ohm serie-weerstand naar DIN WS2812B |
@@ -814,7 +814,7 @@ Serieel commando's: `sim s0 on/off` · `sim p1 on/off` · `status` · `help`
 #define S0_SCHR_PIN   7   // IO7 — Schuur A5 injectie reverse (klem 20/21)
 
 // LED matrix — WS2812B 12×4 = 48 pixels, serpentine
-#define LED_PIN      10   // IO10 via 330Ω, Pixel-line connector
+#define LED_PIN       4   // IO4 via 330Ω, Pixel-line connector — Zarlar shield
 #define MATRIX_COLS  12
 #define MATRIX_ROWS   4
 #define NUM_PIXELS   48
@@ -941,7 +941,7 @@ Interrupts worden altijd geregistreerd, ook in SIM-modus (de pinnen pulseren dan
 - 48 pixels WS2812B, serpentine layout (rij 0: L→R, rij 1: R→L, enz.)
 - Connector: Pixel-line JST SM 3-pin (wit=DI, rood=+5V, blauw=GND)
 - Voeding: aparte 5V/2A — NIET via shield PTC (te zwak)
-- Data: IO10 via 330Ω serieweerstand
+- Data: IO4 via 330Ω serieweerstand
 
 **Kolomlabels (voor op behuizing):**
 
