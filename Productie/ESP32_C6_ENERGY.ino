@@ -46,7 +46,7 @@
 //   IO5  Zonnepanelen A14 — forward productie  (klem 18/19)
 //   IO6  Schuur A5 — forward afname            (klem 18/19)
 //   IO7  Schuur A5 — reverse injectie          (klem 20/21)
-//   IO10 WS2812B matrix DIN (via 330Ω)
+//   IO4  WS2812B matrix DIN (via 330Ω, Pixel-line connector)
 //
 // HomeWizard P1 Meter HWE-P1-RJ12:
 //   Model: HWE-P1-RJ12 · 5V 500mA · 2.4GHz WiFi
@@ -86,7 +86,7 @@
 #define S0_SOL_PIN    5
 #define S0_SCHF_PIN   6
 #define S0_SCHR_PIN   7
-#define LED_PIN      10
+#define LED_PIN       4   // IO4 via 330Ω, Pixel-line connector — Zarlar shield
 
 // ── MATRIX 12×4 = 48 pixels ─────────────────────────────────
 // Serpentine: rij 0 top L→R, rij 1 R→L, rij 2 L→R, rij 3 bodem R→L
