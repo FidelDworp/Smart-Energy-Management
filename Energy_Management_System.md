@@ -935,7 +935,7 @@ wh_sol += (cs - prev_sol) * WH_PER_PULS;  // 0,1 Wh/puls
 Pinnen worden altijd als `INPUT` geregistreerd (geen interne pull-up — externe 4,7kΩ op PCB).
 Interrupts worden altijd geregistreerd, ook in SIM-modus (de pinnen pulseren dan gewoon niet).
 
-### 11.6 LED Matrix 12×4 WS2812B (v1.26)
+### 11.6 LED Matrix 12×4 WS2812B (v1.27)
 
 **Hardware:**
 - 48 pixels WS2812B, serpentine layout (rij 0: L→R, rij 1: R→L, enz.)
@@ -943,29 +943,37 @@ Interrupts worden altijd geregistreerd, ook in SIM-modus (de pinnen pulseren dan
 - Voeding: aparte 5V/2A — NIET via shield PTC (te zwak)
 - Data: IO4 via 330Ω serieweerstand
 
-**Kolomlabels (voor op behuizing):**
+Definitieve kolomindeling volgens EPEX-label ontwerp 27 april 2026:
 
-| Col | Label | Inhoud |
-| --- | --- | --- |
-| 0 | SOL W | Solar vermogen (groen, 0–6000 W) |
-| 1 | SOL kWh | Solar dag totaal (geel-groen, 0–30 kWh) |
-| 2 | SCH AF | SCH afname (rood, 0–10000 W) |
-| 3 | SCH INJ | SCH injectie (cyaan, 0–6000 W) |
-| 4 | NETTO | Groen=injectie / Rood=afname |
-| 5 | WON W | WON vermogen (amber, 0–5000 W) |
-| 6 | EPEX | EPEX prijs nu (groen/geel/rood) |
-| 7 | EPEX+1 | EPEX prijs +1u |
-| 8 | PIEK% | Maandpiek % van max |
-| 9 | KOKEN? | Groen = goed moment (EPEX < 15 ct) |
-| 10 | WASSEN? | Zelfde logica als KOKEN? |
-| 11 | HEAP | Geheugen ESP32 (groen/amber/rood) |
+| Col | Label | Functie | Schaal | Kleur |
+|-----|-------|---------|--------|-------|
+| 0 | ☀️ SOL | Solar vermogen | 0–6 kW | Groen |
+| 1 | SCH↓ | SCH afname | 0–10 kW | Rood |
+| 2 | SCH↑ | SCH injectie | 0–6 kW | Groen |
+| 3 | WON↓ | WON afname | 0–10 kW | Rood |
+| 4 | WON↑ | WON injectie (~2028) | 0–6 kW | Groen/amber |
+| 5 | PIEK | Status max 15kW | 15–27.6 kW | 1px groen/rood |
+| 6 | ct/kWh | All-in prijs | 0–40 ct | Cyaan→rood |
+| 7 | 🏠 HUIS | Huishoudadvies | 1 of 4px | Groen/rood |
+| 8 | 🔋 BAT | Batterij (toekomst) | — | Paars dim |
+| 9 | ❤️ HEAP | ESP32 geheugen | 0–60 KB | Groen/amber/rood |
+| 10 | WiFi | RSSI | -90→-60 dBm | Groen/amber/rood |
+| 11 | SIM | S0/P1 status | 2px boven | Rood/groen |
 
-> ⚠️ **Verschil met EMS v1.5:** het document beschreef een LED-strip van 8 pixels in 5 groepen.
-> De werkelijke implementatie is een **12×4 matrix van 48 pixels** — wezenlijk anders.
+**Ontwerpprincipes:**
+- Lightbars: ONDER→BOVEN (rij 3→0), behalve col 11
+- Col 11: 2 pixels BOVENAAN (rij 0=S0, rij 1=P1)
+- Kleur: Groen=€ op, Rood=€ uit, Cyaan=negatief
+- PIEK: Groen OK, rood=alarm
+- HUIS: Groen bij EPEX<15ct OF solar>1.5kW
 
-**Sim-indicator:** col 0 rij 0 knippert rood als SIM_S0 actief · col 1 rij 0 als SIM_P1 actief.
-
----
+**Versiegeschiedenis toegevoegd:**
+```
+v1.8 | 28 apr 2026 | Matrix 12×4 definitief ontwerp geïmplementeerd (v1.27). 
+                     Kolomindeling herzien: SCH/WON gegroepeerd, PIEK-logica 
+                     aangepast, SIM-indicators naar col 11 bovenaan. 
+                     Sketch v1.27 getest en actief.
+```
 
 ## 12. Fasering — gefaseerd ontwikkelplan
 
