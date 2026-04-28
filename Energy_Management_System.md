@@ -1,5 +1,5 @@
 # Energy Management System — Zarlardinge
-## Technisch werkdocument v1.7 — April 2026
+## Technisch werkdocument v1.8 — April 2026
 
 **ESP32-C6 · Arduino IDE · ESPAsyncWebServer · Matter · Google Sheets**
 *Filip Dworp (FiDel) — Zarlardinge (BE)*
@@ -938,42 +938,74 @@ Interrupts worden altijd geregistreerd, ook in SIM-modus (de pinnen pulseren dan
 ### 11.6 LED Matrix 12×4 WS2812B (v1.27)
 
 **Hardware:**
-- 48 pixels WS2812B, serpentine layout (rij 0: L→R, rij 1: R→L, enz.)
+- 48 pixels WS2812B, **verticale serpentine** layout (kolom-per-kolom, zie onder)
 - Connector: Pixel-line JST SM 3-pin (wit=DI, rood=+5V, blauw=GND)
 - Voeding: aparte 5V/2A — NIET via shield PTC (te zwak)
 - Data: IO4 via 330Ω serieweerstand
 
-Definitieve kolomindeling volgens EPEX-label ontwerp 27 april 2026:
+**KRITIEK — Verticale serpentine mapping:**
 
-| Col | Label | Functie | Schaal | Kleur |
-|-----|-------|---------|--------|-------|
-| 0 | ☀️ SOL | Solar vermogen | 0–6 kW | Groen |
-| 1 | SCH↓ | SCH afname | 0–10 kW | Rood |
-| 2 | SCH↑ | SCH injectie | 0–6 kW | Groen |
-| 3 | WON↓ | WON afname | 0–10 kW | Rood |
-| 4 | WON↑ | WON injectie (~2028) | 0–6 kW | Groen/amber |
-| 5 | PIEK | Status max 15kW | 15–27.6 kW | 1px groen/rood |
-| 6 | ct/kWh | All-in prijs | 0–40 ct | Cyaan→rood |
-| 7 | 🏠 HUIS | Huishoudadvies | 1 of 4px | Groen/rood |
-| 8 | 🔋 BAT | Batterij (toekomst) | — | Paars dim |
-| 9 | ❤️ HEAP | ESP32 geheugen | 0–60 KB | Groen/amber/rood |
-| 10 | WiFi | RSSI | -90→-60 dBm | Groen/amber/rood |
-| 11 | SIM | S0/P1 status | 2px boven | Rood/groen |
+Deze matrix gebruikt een **verticale serpentine** (kolom-per-kolom), NIET de standaard horizontale (rij-per-rij)!
+
+- **Start:** Pixel 0 = Col 11, Rij 3 (rechtsonder)
+- **Richting:** Rechts→Links (col 11→10→9...→0)
+- **Patroon per kolom:**
+  - Oneven cols (11,9,7,5,3,1): ONDER→BOVEN ↑
+  - Even cols (10,8,6,4,2,0): BOVEN→ONDER ↓
+
+**Pixel mapping voorbeelden:**
+```
+Pixel 0-3:   Col 11 (rij 3→0) ↑
+Pixel 4-7:   Col 10 (rij 0→3) ↓
+Pixel 8-11:  Col 9  (rij 3→0) ↑
+Pixel 12-15: Col 8  (rij 0→3) ↓
+...
+Pixel 44-47: Col 0  (rij 0→3) ↓
+```
+
+**pxIdx() functie (sketch v1.27):**
+```cpp
+inline int pxIdx(int col, int row) {
+  int col_from_right = 11 - col;
+  int pixel_base = col_from_right * 4;
+  
+  if (col_from_right % 2 == 0) {
+    // Cols 11,9,7,5,3,1: onder→boven
+    return pixel_base + (3 - row);
+  } else {
+    // Cols 10,8,6,4,2,0: boven→onder
+    return pixel_base + row;
+  }
+}
+```
+
+**Definitieve kolomindeling volgens EPEX-label ontwerp 27 april 2026:**
+
+| Col | Label | Functie | Schaal | Kleur | Richting |
+|-----|-------|---------|--------|-------|----------|
+| 0 | ☀️ SOL | Solar vermogen | 0–6 kW | Groen | ↓ Boven→Onder |
+| 1 | SCH↓ | SCH afname | 0–10 kW | Rood | ↑ Onder→Boven |
+| 2 | SCH↑ | SCH injectie | 0–6 kW | Groen | ↓ Boven→Onder |
+| 3 | WON↓ | WON afname | 0–10 kW | Rood | ↑ Onder→Boven |
+| 4 | WON↑ | WON injectie (~2028) | 0–6 kW | Groen/amber | ↓ Boven→Onder |
+| 5 | PIEK | Status max 15kW | 15–27.6 kW | 1px groen/rood | ↑ Onder→Boven |
+| 6 | ct/kWh | All-in prijs | 0–40 ct | Cyaan→rood | ↓ Boven→Onder |
+| 7 | 🏠 HUIS | Huishoudadvies | 1 of 4px | Groen/rood | ↑ Onder→Boven |
+| 8 | 🔋 BAT | Batterij (toekomst) | — | Paars dim | ↓ Boven→Onder |
+| 9 | ❤️ HEAP | ESP32 geheugen | 0–60 KB | Groen/amber/rood | ↑ Onder→Boven |
+| 10 | WiFi | RSSI | -90→-60 dBm | Groen/amber/rood | ↓ Boven→Onder |
+| 11 | SIM | S0/P1 status | 2px boven | Rood/groen | ↑ Onder→Boven |
 
 **Ontwerpprincipes:**
-- Lightbars: ONDER→BOVEN (rij 3→0), behalve col 11
-- Col 11: 2 pixels BOVENAAN (rij 0=S0, rij 1=P1)
-- Kleur: Groen=€ op, Rood=€ uit, Cyaan=negatief
-- PIEK: Groen OK, rood=alarm
-- HUIS: Groen bij EPEX<15ct OF solar>1.5kW
+- **Lightbar richting:** Afwisselend door verticale serpentine (zie tabel)
+- **Col 11 SIM-indicators:** 2 pixels BOVENAAN (rij 0=S0, rij 1=P1), knipperend rood bij simulatie
+- **Kleurcode:** Groen=€ opbrengst, Rood=€ kosten, Cyaan=negatieve prijs
+- **PIEK-logica:** 1px groen onderaan=OK (<15kW), rode gradient=overschrijding
+- **HUIS-advies:** Groen=goed moment (EPEX<15ct OF solar>1.5kW), Rood=duur
 
-**Versiegeschiedenis toegevoegd:**
-```
-v1.8 | 28 apr 2026 | Matrix 12×4 definitief ontwerp geïmplementeerd (v1.27). 
-                     Kolomindeling herzien: SCH/WON gegroepeerd, PIEK-logica 
-                     aangepast, SIM-indicators naar col 11 bovenaan. 
-                     Sketch v1.27 getest en actief.
-```
+**Print overlay:**
+Label-overlay SVG (120×35mm) met pixel-vensters geproduceerd 27 april 2026.
+Print, snij uit, en kleef op matrix voor perfecte afstemming met kolom-labels.
 
 ## 12. Fasering — gefaseerd ontwikkelplan
 
@@ -1529,6 +1561,8 @@ Sketch v0.3 (LED + push):
 | v1.3 | April 2026 | Sectie 5: 12 LED pixels in 5 groepen, advies-pixels voor Céline/Mireille. Sectie 7: reële prijsstructuur, planningstabel, piekbeheer, SOC-simulatie, live testpagina |
 | v1.4 | April 2026 | Sectie 7: 4 grafieken op zelfde tijdas, BTW op volledige som, 5 instelbare tariefcomponenten, infokaarten, cache-fix 00:00 |
 | **v1.6** | April 2026 | §1 controllers bijgewerkt (v1.26 actief, Dashboard v5.8, RPi v2.0). §11.1–11.6 volledig herschreven: twee sim-vlaggen, actuele pins, LED matrix 12×4, JSON keys v1.26. §12 fasering bijgewerkt. §17 RPi gateway vervangen door §18 RPi Portal (Node.js, Tailscale). §19 HomeWizard P1 dongle toegevoegd. §20 EPEX injectieberekening toegevoegd. |
+| **v1.7** | 27 apr 2026 | §11.6 Matrix kolomindeling voorlopig volgens EPEX-label gesprek. max_piek_w default 15kW. |
+| **v1.8** | 28 apr 2026 | §11.6 DEFINITIEF: Verticale serpentine mapping gedocumenteerd na test-sketch verificatie. pxIdx() functie correct voor kolom-per-kolom layout (rechts→links, afwisselend ↑↓). Matrix v1.27 volledig functioneel. SIM-indicators col 11 bovenaan, alle andere kolommen volgens EPEX-label ontwerp 27 april. |
 | **v1.5** | April 2026 | Sectie 17 toegevoegd: Raspberry Pi Gateway (nginx + cloudflared). |
 
 ---
