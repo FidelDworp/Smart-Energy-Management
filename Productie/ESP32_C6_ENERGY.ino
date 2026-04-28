@@ -1,4 +1,4 @@
-// ESP32_C6_ENERGY_v1_26.ino — Zarlar Smart Energy Controller
+// ESP32_C6_ENERGY_v1_27.ino — Zarlar Smart Energy Controller
 // Developed by Filip Delannoy, april 2026.
 // Bereikbaar op http://192.168.0.73
 //
@@ -10,17 +10,9 @@
 //   spiffs,  data, spiffs,0xC10000, 0x3F0000,
 //
 // ── VERSIEHISTORIE ──────────────────────────────────────────
+// 28apr26 v1.27 Matrix layout definitief (EPEX-label 27 april):
+//
 // 25apr26 v1.26 Twee onafhankelijke simulatievlaggen:
-//               SIM_S0: simuleert 3× S0-kanalen (solar, SCH afname, SCH injectie)
-//               SIM_P1: simuleert P1-dongle data (WON afname + injectie)
-//               Beide apart instelbaar via /settings en serieel commando's
-//               NOOIT automatisch omschakelen — bewuste keuze per kanaal
-//               HomeWizard P1 Meter HWE-P1-RJ12 integratie via lokale REST API:
-//                 GET http://<P1_IP>/api/v1/data → JSON met active_power_w,
-//                 total_power_import_t1/t2_kwh, total_power_export_t1/t2_kwh
-//               P1_IP instelbaar via /settings, NVS-persistent
-//               /json: sim_s0 en sim_p1 als aparte indicatoren toegevoegd
-//               WON vermogen (b), WON dag import (i), WON dag export (vw) actief
 //
 // 25apr26 v1.25 Enkelvoudige SIMULATION_MODE (archief)
 // 24apr26 v1.24 Eerste productieversie — live S0 ISR
@@ -78,7 +70,7 @@
 #include <math.h>
 
 // ── VERSIE ──────────────────────────────────────────────────
-#define FW_VERSION   "1.26"
+#define FW_VERSION   "1.27"
 #define CTRL_ID      "S-ENERGY"
 #define NVS_NS       "senrg"
 
@@ -152,7 +144,7 @@ char          wifi_ssid[64]= "";
 char          wifi_pass[64]= "";
 char          static_ip[24]= "";
 char          p1_ip[24]    = "";     // HomeWizard P1 Meter IP (instelbaar)
-uint32_t      max_piek_w   = 10000;
+uint32_t      max_piek_w   = 15000;  // Default 15kW conform EPEX-label
 
 // ── ISR VARIABELEN (S0 live modus) ──────────────────────────
 volatile uint32_t      isr_sol_cnt  = 0, isr_schf_cnt  = 0, isr_schr_cnt  = 0;
@@ -199,10 +191,20 @@ void IRAM_ATTR isrSchR() {
 }
 
 // ── MATRIX HELPERS ──────────────────────────────────────────
+// VERTICALE serpentine: rechts→links, kolom-per-kolom
+// Oneven cols (11,9,7,5,3,1): onder→boven ↑
+// Even cols (10,8,6,4,2,0): boven→onder ↓
 inline int pxIdx(int col, int row) {
-  return (row % 2 == 0)
-    ? row * MATRIX_COLS + col
-    : row * MATRIX_COLS + (MATRIX_COLS - 1 - col);
+  int col_from_right = 11 - col;  // Col 11→0, col 10→1, etc.
+  int pixel_base = col_from_right * 4;
+  
+  if (col_from_right % 2 == 0) {
+    // Even col_from_right (cols 11,9,7,5,3,1): onder→boven
+    return pixel_base + (3 - row);
+  } else {
+    // Odd col_from_right (cols 10,8,6,4,2,0): boven→onder
+    return pixel_base + row;
+  }
 }
 
 void lightbar(int col, float v, uint32_t cf, uint32_t cd = 0x070707) {
@@ -221,53 +223,98 @@ uint32_t epexKleur(float ct) {
   return               strip.Color(140,   0,  0);
 }
 
-// Sim-indicator: knippert col 0 rij 0 (S0 sim) en/of col 1 rij 0 (P1 sim)
+// SIM-indicator col 11: BOVENAAN 2 pixels (rij 0+1)
+// Rij 0 (bovenaan) = S0 status, Rij 1 = P1 status
 void simIndicatorPulse() {
   static bool tog = false; tog = !tog;
-  uint32_t kleur = tog ? strip.Color(80, 0, 0) : 0x070707;
-  if (SIM_S0) strip.setPixelColor(pxIdx(0, 0), kleur);
-  if (SIM_P1) strip.setPixelColor(pxIdx(1, 0), kleur);
+  uint32_t rood  = tog ? strip.Color(100, 0, 0) : strip.Color(30, 0, 0);
+  uint32_t groen = strip.Color(0, 100, 0);
+  
+  // S0: rij 0, col 11
+  strip.setPixelColor(pxIdx(11, 0), SIM_S0 ? rood : groen);
+  // P1: rij 1, col 11
+  strip.setPixelColor(pxIdx(11, 1), SIM_P1 ? rood : groen);
 }
 
 // ── MATRIX UPDATE ───────────────────────────────────────────
+// v1.27: Aangepast naar definitief EPEX-label ontwerp
 void updateMatrix() {
-  lightbar(0, w_sol   / MAX_SOL_W, strip.Color(0, 130, 0));
-  lightbar(1, wh_sol  / MAX_DAG_WH, strip.Color(60, 130, 0));
-  lightbar(2, w_schf  / MAX_SCH_W, strip.Color(150, 0, 0));
-  lightbar(3, w_schr  / MAX_SOL_W, strip.Color(0, 80, 140));
-  if (w_netto >= 0) lightbar(4,  w_netto / MAX_SOL_W, strip.Color(0, 130, 0));
-  else              lightbar(4, -w_netto / MAX_SCH_W,  strip.Color(150, 0, 0));
-  lightbar(5, constrain(epex_nu  / 40.0f, 0, 1), epexKleur(epex_nu));
-  lightbar(6, constrain(epex_p1h / 40.0f, 0, 1), epexKleur(epex_p1h));
-  {
-    float f = constrain(piek_w / (float)max_piek_w, 0, 1);
-    uint32_t c = (f < 0.6f) ? strip.Color(0, 100, 0)
-               : (f < 0.85f)? strip.Color(120, 90, 0)
-                             : strip.Color(140, 0, 0);
-    lightbar(7, f, c);
+  // Col 0: ☀️ SOL (solar vermogen 0-6kW, groen)
+  lightbar(0, w_sol / MAX_SOL_W, strip.Color(0, 150, 0));
+  
+  // Col 1: SCH↓ (SCH afname 0-10kW, rood)
+  lightbar(1, w_schf / MAX_SCH_W, strip.Color(180, 0, 0));
+  
+  // Col 2: SCH↑ (SCH injectie 0-6kW, groen)
+  lightbar(2, w_schr / MAX_SOL_W, strip.Color(0, 150, 0));
+  
+  // Col 3: WON↓ (WON afname 0-10kW, rood)
+  // In SIM_P1: toon gesimuleerd verbruik, anders live P1-data
+  float won_afname = (w_won > 0) ? w_won : 0;
+  lightbar(3, won_afname / MAX_SCH_W, strip.Color(180, 0, 0));
+  
+  // Col 4: WON↑ (WON injectie 0-6kW, groen)
+  // Nog niet beschikbaar tot P1-dongle (~2028)
+  float won_injectie = (w_won < 0) ? -w_won : 0;
+  if (SIM_P1) {
+    // Simulatie: nog geen WON injectie
+    lightbar(4, 0, strip.Color(0, 0, 0), strip.Color(20, 10, 0)); // Dim amber = ~2028
+  } else {
+    lightbar(4, won_injectie / MAX_SOL_W, strip.Color(0, 150, 0));
   }
-  {
-    bool goed = (epex_nu < 15.0f) || (w_sol > 1500.0f);
-    uint32_t ca = goed ? strip.Color(0, 120, 0) : strip.Color(120, 35, 0);
-    lightbar(8, goed ? 1.0f : 0.3f, ca);
-    lightbar(9, goed ? 1.0f : 0.3f, ca);
+  
+  // Col 5: PIEK (status max 15kW)
+  // Groen = onder limiet, Rood gradient = boven limiet
+  float piek_pct = piek_w / (float)max_piek_w;
+  if (piek_pct <= 1.0f) {
+    // Onder limiet: 1 groene pixel onderaan
+    strip.setPixelColor(pxIdx(5, 3), strip.Color(0, 120, 0));
+    strip.setPixelColor(pxIdx(5, 2), 0x070707);
+    strip.setPixelColor(pxIdx(5, 1), 0x070707);
+    strip.setPixelColor(pxIdx(5, 0), 0x070707);
+  } else {
+    // Boven limiet: rode lightbar naar boven
+    float over_pct = constrain((piek_pct - 1.0f) / 0.84f, 0, 1); // 1.0-1.84 (max 40A*3*230V/15kW)
+    lightbar(5, over_pct, strip.Color(180, 0, 0));
   }
-  {
-    float h = constrain((float)ESP.getMaxAllocHeap() / 55000.0f, 0, 1);
-    uint32_t c = (h > 0.55f) ? strip.Color(0, 80, 0)
-               : (h > 0.30f) ? strip.Color(110, 80, 0)
-                              : strip.Color(140, 0, 0);
-    lightbar(10, h, c);
+  
+  // Col 6: ct/kWh (all-in prijs 0-40ct, kleurgradiënt)
+  lightbar(6, constrain(epex_nu / 40.0f, 0, 1), epexKleur(epex_nu));
+  
+  // Col 7: 🏠 HUIS (huishoudadvies)
+  // Groen = goed moment (EPEX < 15ct OF solar > 1.5kW), Rood = duur
+  bool goed_moment = (epex_nu < 15.0f) || (w_sol > 1500.0f);
+  uint32_t huis_kleur = goed_moment ? strip.Color(0, 140, 0) : strip.Color(160, 0, 0);
+  lightbar(7, goed_moment ? 1.0f : 0.25f, huis_kleur);
+  
+  // Col 8: 🔋 BAT (batterij, toekomst)
+  // Nog niet geïmplementeerd — dim paars = gereserveerd
+  for (int r = 0; r < MATRIX_ROWS; r++) {
+    strip.setPixelColor(pxIdx(8, r), strip.Color(20, 0, 30));
   }
-  {
-    int rssi = ap_mode ? -99 : WiFi.RSSI();
-    float f  = constrain((rssi + 90.0f) / 30.0f, 0, 1);
-    uint32_t c = (rssi >= -60) ? strip.Color(0, 80, 0)
-               : (rssi >= -75) ? strip.Color(110, 80, 0)
-                               : strip.Color(140, 0, 0);
-    lightbar(11, f, c);
-  }
-  if (SIM_S0 || SIM_P1) simIndicatorPulse();
+  
+  // Col 9: ❤️ HEAP (ESP32 geheugen)
+  float heap_pct = constrain((float)ESP.getMaxAllocHeap() / 60000.0f, 0, 1);
+  uint32_t heap_kleur = (heap_pct > 0.50f) ? strip.Color(0, 100, 0)
+                      : (heap_pct > 0.30f) ? strip.Color(140, 100, 0)
+                                           : strip.Color(160, 0, 0);
+  lightbar(9, heap_pct, heap_kleur);
+  
+  // Col 10: WiFi (RSSI -90 tot -60 dBm)
+  int rssi = ap_mode ? -99 : WiFi.RSSI();
+  float rssi_pct = constrain((rssi + 90.0f) / 30.0f, 0, 1);
+  uint32_t wifi_kleur = (rssi >= -60) ? strip.Color(0, 100, 0)
+                      : (rssi >= -75) ? strip.Color(140, 100, 0)
+                                      : strip.Color(160, 0, 0);
+  lightbar(10, rssi_pct, wifi_kleur);
+  
+  // Col 11: SIM (S0/P1 status, 2 pixels bovenaan)
+  // Onderste 2 pixels zwart
+  strip.setPixelColor(pxIdx(11, 2), 0);
+  strip.setPixelColor(pxIdx(11, 3), 0);
+  // Bovenste 2 pixels: sim-indicator
+  simIndicatorPulse();
+  
   strip.show();
 }
 
