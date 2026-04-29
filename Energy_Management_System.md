@@ -1,5 +1,5 @@
 # Energy Management System — Zarlardinge
-## Technisch werkdocument v1.8 — April 2026
+## Technisch werkdocument v1.9 — April 2026
 
 **ESP32-C6 · Arduino IDE · ESPAsyncWebServer · Matter · Google Sheets**
 *Filip Dworp (FiDel) — Zarlardinge (BE)*
@@ -1563,6 +1563,7 @@ Sketch v0.3 (LED + push):
 | **v1.6** | April 2026 | §1 controllers bijgewerkt (v1.26 actief, Dashboard v5.8, RPi v2.0). §11.1–11.6 volledig herschreven: twee sim-vlaggen, actuele pins, LED matrix 12×4, JSON keys v1.26. §12 fasering bijgewerkt. §17 RPi gateway vervangen door §18 RPi Portal (Node.js, Tailscale). §19 HomeWizard P1 dongle toegevoegd. §20 EPEX injectieberekening toegevoegd. |
 | **v1.7** | 27 apr 2026 | §11.6 Matrix kolomindeling voorlopig volgens EPEX-label gesprek. max_piek_w default 15kW. |
 | **v1.8** | 28 apr 2026 | §11.6 DEFINITIEF: Verticale serpentine mapping gedocumenteerd na test-sketch verificatie. pxIdx() functie correct voor kolom-per-kolom layout (rechts→links, afwisselend ↑↓). Matrix v1.27 volledig functioneel. SIM-indicators col 11 bovenaan, alle andere kolommen volgens EPEX-label ontwerp 27 april. |
+| **v1.9** | 29 apr 2026 | §18.3–18.4: Web UI integratie compleet. Nieuwe pagina `12x4_matrix.html` — live replica fysieke matrix (48 pixels, 12 kolommen). index.html S-ENERGY tegel linkt naar 12×4 matrix. Dashboard tegel linkt naar 16×16 matrix. epex-grafiek.html LED strip verwijderd + link naar matrix. JSON key mapping geverifieerd correct in web UI. |
 | **v1.5** | April 2026 | Sectie 17 toegevoegd: Raspberry Pi Gateway (nginx + cloudflared). |
 
 ---
@@ -1632,7 +1633,8 @@ ESP32 controllers (192.168.0.70–.80) + Photons (via Cloudflare Worker)
 | Portal overzicht | `/` (index.html) | ✅ Actief |
 | ECO Boiler detail | `/eco.html` | ✅ Actief |
 | EPEX grafiek | `/epex-grafiek.html` | ✅ Actief |
-| Live matrix | `/matrix.html` | ✅ Actief |
+| Live matrix 16×16 | `/matrix.html` | ✅ Actief |
+| **S-ENERGY matrix 12×4** | **/12x4_matrix.html** | **✅ Actief 29/04** |
 | HVAC detail | `/hvac.html` | ⬜ Gepland |
 | Afrekening WON/SCH | `/afrekening` | ⬜ Gepland |
 
@@ -1640,13 +1642,25 @@ ESP32 controllers (192.168.0.70–.80) + Photons (via Cloudflare Worker)
 
 **index.html — S-ENERGY tegel:**
 - Toont: solar W (boog), netto W (kleur), EPEX ct, sim-badge (oranje/groen)
-- Linkt naar: `/matrix.html`
+- Linkt naar: **`/12x4_matrix.html`** (was `/matrix.html`, gewijzigd 29/04/2026)
 - Demodata bij server offline: `senrg: {a:2800, e:350, n:1820, sim_s0:1, sim_p1:1}`
 
-**epex-grafiek.html — Injectie kaart:**
+**index.html — Dashboard tegel:**
+- Linkt naar: `/matrix.html` (16×16 statusmatrix, toegevoegd 29/04/2026)
+
+**epex-grafiek.html — Injectie kaart + matrix link:**
 - Derde info-kaart "☀️ Injectie vandaag" met kWh + € opbrengst
 - Badge toont: `S0:SIM · P1:SIM` / `S0:LIVE · P1:SIM` / `S0:LIVE · P1:LIVE`
 - Data via `pollSenrg()` elke 30s — valt terug op simulatie als offline
+- **LED strip sectie verwijderd** (29/04/2026) → vervangen door link naar `/12x4_matrix.html`
+
+**12x4_matrix.html — S-ENERGY matrix 12×4 (NIEUW 29/04/2026):**
+- Live replica van fysieke WS2812B matrix (48 pixels)
+- 12 kolommen: SOL, SCH↓, SCH↑, WON↓, WON↑, PIEK, ct/kWh, HUIS, BAT, HEAP, WiFi, SIM
+- Lightbar rendering (onder→boven) conform v1.27 sketch
+- SIM-indicators bovenaan (rij 0+1): rood=simulatie, groen=live
+- Auto-refresh elke 15s via `/api/poll/senrg`
+- Gebruikt `zarlar.css` + `zarlar.js` shared libraries
 
 **matrix.html — Rij 2 S-ENERGY:**
 - 16 pixels conform `renderEnergyRow()` in Dashboard v5.8
