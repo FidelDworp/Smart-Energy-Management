@@ -36,7 +36,7 @@ Alle controllers publiceren een `/json` endpoint. Het **Zarlar Dashboard (192.16
 [SENRG 192.168.0.73] --+--> Zarlar Dashboard 192.168.0.60 --> Google Sheets
 [ROOM  192.168.0.80] --+
          |
-         +--> Cloudflare Tunnel --> publieke URL (remote toegang)
+         +--> Tailscale VPN --> remote toegang van overal
 ```
 
 ### Bestaande controllers
@@ -409,25 +409,22 @@ Key `o` = helderheidspercentage (0-100).
 
 ---
 
-## 6. Remote toegang — Raspberry Pi Gateway
+## 6. Remote toegang — Raspberry Pi Portal + Tailscale
 
-De remote toegang voor **alle** Zarlar-controllers (HVAC, ECO, Smart Energy, ROOM,
-Dashboard) verloopt via een **Raspberry Pi** die als centrale gateway dient.
-De Pi draait nginx + cloudflared en fungeert als veilige brug tussen het internet
-en het lokale netwerk — zonder open poorten op de Telenet-router.
+De remote toegang voor **alle** Zarlar-controllers verloopt via de **Raspberry Pi**
+als centrale portal en proxy. De RPi draait Node.js + Tailscale VPN.
 
-**Volledige uitwerking: zie §17.**
+**Volledige uitwerking: zie §17 en §18.**
 
-Bereikbare URLs na installatie:
+Bereikbare URLs:
 ```
-https://controllers.zarlardinge.be/senrg/    → Smart Energy (deze controller)
-https://controllers.zarlardinge.be/eco/      → ECO Boiler
-https://controllers.zarlardinge.be/hvac/     → HVAC
-https://controllers.zarlardinge.be/status    → Health alle controllers
+Lokaal:     http://192.168.0.50:3000                → RPi portal (alle pagina's)
+Tailscale:  http://100.123.74.113:3000               → RPi portal van overal
+Funnel:     https://raspberrypi.tail3c7f42.ts.net/   → publieke URL voor gasten
 ```
 
+De browser gebruikt NOOIT lokale controller IPs — alles via `/api/` op de RPi.
 De ESP32-controllers zelf worden niet gewijzigd voor remote toegang.
-OTA-updates ook mogelijk van overal: `/senrg/update`.
 
 ---
 
@@ -1056,36 +1053,32 @@ Doel: automatisch sturen op basis van bewezen patronen.
 ```
 [Zonnepanelen zuiddak + westdak]
         |
-[SMA omvormers x3] -- Speedwire (fase 2)
+[SMA omvormers x3] -- Speedwire/Modbus (fase 2)
         |
 [S0-tellers in verdeelkast]
   Solar / WON / SCH
         |
 [UTP kabel ~2m afgeschermd]
         |
-[Interface PCB -- optocouplers PC817]
-  3x galvanische scheiding
+[Interface PCB -- directe S0 verbinding (IEC 62053-31)]
         |
 [ESP32-C6 Shield -- kastje inkomhal Maarten -- 192.168.0.73]
         |
    +----+-------+--------+----------+----------+
    |            |        |          |          |
-[LED strip]  [ntfy.sh] [/json]  [EPEX API]  [fase 2+]
- 8x WS2812B   push      |       ENTSO-E      ECO-boiler
- inkomhal    notif.     |       dag-voor-dag  Tesla
-                        |                    Batterij
-                        v
+[LED matrix]  [ntfy.sh] [/json]  [EPEX via]  [fase 2+]
+ 12x4 WS2812B  push      |      RPi portal   ECO-boiler
+ inkomhal    notif.      |                   EV laden
+                         v                   Batterij
               [Zarlar Dashboard 192.168.0.60]
-                        |
-                        v
-                 [Google Sheets]
-                 [Matrix rij 2: S-ENERGY]
-
-                        |
-              [Cloudflare Worker]
-                        |
-              [iPhone / Android]
-              [overal ter wereld]
+                   |              |
+                   v              v
+            [Google Sheets]  [RPi Portal 192.168.0.50]
+                                  |
+                             [Tailscale VPN]
+                                  |
+                         [iPhone / Mac / Browser]
+                         [van overal ter wereld]
 ```
 
 ---
@@ -1785,7 +1778,7 @@ Het systeem moet volledig functioneren zonder internetverbinding — cloud is bo
 
 | Versie | Datum | Wijzigingen |
 | --- | --- | --- |
-| **v2.0** | Mei 2026 | §23 Slimme sturingsstrategieën: curtailment, negatieve EPEX, arbitrage, piekafvlakking. §24 Overzicht stuurbare toestellen: interfaces, protocollen, implementatieprioriteit per toestel. SMA Modbus curtailment registers gedocumenteerd. Lokaal vs cloud architectuurbeslissing. |
+| **v2.0** | Mei 2026 | §6, §13, §17, §18 bijgewerkt: Tailscale ipv Cloudflare, RPi 3B+ met Debian 13, gebruiker fidel, deploy workflow, Funnel voor gasten, backup kaartjes. Historische nginx+cloudflared sectie verwijderd. §23 Slimme sturingsstrategieën: curtailment, negatieve EPEX, arbitrage, piekafvlakking. §24 Overzicht stuurbare toestellen: interfaces, protocollen, implementatieprioriteit per toestel. SMA Modbus curtailment registers gedocumenteerd. Lokaal vs cloud architectuurbeslissing. |
 
 
 
@@ -1812,30 +1805,91 @@ Het systeem moet volledig functioneren zonder internetverbinding — cloud is bo
 
 ---
 
-## 17. Remote toegang — Tailscale (actueel, april 2026)
+## 17. Remote toegang — Tailscale (actueel, mei 2026)
 
-> ⚠️ **§17 is vervangen door de werkelijke implementatie.** De geplande nginx+cloudflared aanpak
-> (EMS v1.5) is **niet gerealiseerd**. In plaats daarvan draait de RPi Node.js + Tailscale.
-> De originele §17 installatie-instructies zijn bewaard onderaan dit document als historische referentie.
-
-**Actuele situatie:**
+### 17.1 Overzicht
 
 | Component | Waarde |
 | --- | --- |
-| Hardware | Raspberry Pi, vaste IP `192.168.0.50` |
+| Hardware | **Raspberry Pi 3 Model B Plus Rev 1.3** |
+| OS | Debian GNU/Linux 13 (trixie), aarch64 |
+| Gebruiker | `fidel` (home: `/home/fidel/`) |
+| Vaste IP lokaal | `192.168.0.50` (via NetworkManager, WiFi "Delannoy") |
+| WiFi | via NetworkManager, connectie "Delannoy" |
 | Software | Node.js v18 + Express, poort 3000 |
-| Remote toegang | **Tailscale** VPN (`100.123.74.113`) — werkt overal |
+| Remote toegang | **Tailscale** VPN (`100.123.74.113`) |
 | Deploy | `bash ~/deploy.sh "omschrijving"` op Mac |
+| SSH | `ssh fidel@192.168.0.50` (lokaal) of `ssh fidel@100.123.74.113` (remote) |
 
-**Tailscale gebruikers:**
+### 17.2 Tailscale netwerk
 
-| Gebruiker | Status |
-| --- | --- |
-| Filip + Mireille | ✅ Verbonden (gedeeld Apple account) |
-| Maarten | ⬜ Nog uit te nodigen |
-| Céline | ⬜ Nog uit te nodigen |
+Tailscale account: `s95qr7hp6b@privaterelay.appleid.com`
 
-Portal bereikbaar via: `http://100.123.74.113:3000`
+| Toestel | Tailscale IP | Status |
+| --- | --- | --- |
+| raspberrypi (RPi portal) | 100.123.74.113 | ✅ Actief |
+| iphone172 (Filip) | 100.104.215.18 | ✅ Actief |
+| macbook-air-2 (Filip) | 100.89.205.22 | ✅ Actief |
+| Maarten | — | ⬜ Nog uit te nodigen |
+| Céline | — | ⬜ Nog uit te nodigen |
+
+Bereikbaar via Tailscale: `http://100.123.74.113:3000`
+
+### 17.3 Tailscale Funnel — publieke URL voor gasten
+
+Voor tijdelijke externe toegang (bijv. voor Geert Van Leuven):
+
+```bash
+ssh fidel@100.123.74.113
+sudo tailscale funnel 3000
+```
+
+Publieke URL: `https://raspberrypi.tail3c7f42.ts.net/`
+
+- Werkt zonder Tailscale app bij de gast — gewone browser volstaat
+- SSH sessie open laten zolang de gast moet kunnen surfen
+- Op achtergrond: `sudo tailscale funnel --bg 3000`
+- Stoppen: `tailscale funnel off`
+
+### 17.4 Deploy workflow — Mac naar RPi
+
+```bash
+# Alle bestanden naar ~/Downloads kopiëren, dan:
+bash ~/deploy.sh "omschrijving van wijziging"
+```
+
+`deploy.sh` (op Mac, in home directory) doet automatisch:
+1. `git add + commit + push` naar GitHub
+2. SSH naar RPi → `git pull` in `~/Zarlardinge_Dashboards/`
+3. Herstart `zarlar.service` indien `server.js` gewijzigd
+
+**GitHub = enige bron van waarheid.** RPi haalt altijd van GitHub.
+
+Bestanden op RPi:
+```
+/home/fidel/Zarlardinge_Dashboards/ESP32_Zarlar/zarlar-rpi/
+├── server.js
+├── public/
+│   ├── index.html
+│   └── epex-grafiek.html
+└── ...
+```
+
+### 17.5 Backup SD-kaartjes
+
+Twee backup kaartjes — met beide kan je elke RPi opstarten met alles intact:
+- BLACK 32GB: laatst gekloond 22 apr 2026
+- SANDISK 32GB: laatst gekloond 23 apr 2026
+
+Klonen via "SD card copier" (Accessories) op RPi.
+Na klonen naar 32GB: `sudo raspi-config nonint do_expand_rootfs` + `sudo reboot`.
+
+### 17.6 Belangrijke notities
+
+- **WiFi via NetworkManager** (niet dhcpcd — Debian 13 Trixie)
+- Vast IP instellen via: `sudo nmcli con mod "Delannoy" ipv4.addresses 192.168.0.50/24`
+- USB sticks hebben `noexec` vlag — bestanden eerst kopiëren naar home directory
+- **Geen nginx, geen cloudflared** — Node.js serveert alles rechtstreeks op poort 3000
 
 ---
 
@@ -1847,11 +1901,11 @@ De RPi is een **display + controle laag** — hij meet niets zelf.
 De **Dashboard controller (192.168.0.60) blijft de bron van waarheid** voor Google Sheets logging.
 
 ```
-Browser (overal via Tailscale)
+Browser (overal via Tailscale of Funnel)
         ↓
 RPi Node.js :3000  (/api/poll/senrg, /api/epex, /api/matrix, ...)
         ↓
-ESP32 controllers (192.168.0.70–.80) + Photons (via Cloudflare Worker)
+ESP32 controllers (192.168.0.70–.80)
 ```
 
 **Gouden regel:** de browser gebruikt NOOIT lokale IPs — alles via `/api/` op de RPi.
@@ -1865,7 +1919,6 @@ ESP32 controllers (192.168.0.70–.80) + Photons (via Cloudflare Worker)
 | `GET /api/poll/hvac` | Poll HVAC /json |
 | `GET /api/epex` | EPEX België spotprijzen (gecached) |
 | `GET /api/matrix` | Alle controllers parallel (ESP32 + Photons) |
-| `GET /api/photon/:id` | Photon proxy via Cloudflare Worker |
 | `GET /api/settings` | Persistente instellingen laden |
 | `POST /api/settings` | Instelling opslaan |
 | `GET /api/status` | Status alle controllers |
@@ -1913,12 +1966,22 @@ ESP32 controllers (192.168.0.70–.80) + Photons (via Cloudflare Worker)
 
 ### 18.5 Deploy workflow
 
+Vanuit Mac Terminal:
 ```bash
-# Alle bestanden naar ~/Downloads kopiëren, dan:
 bash ~/deploy.sh "omschrijving van wijziging"
 ```
 
-`deploy.sh` doet automatisch: git commit → push → SSH naar RPi → rsync → herstart indien server.js gewijzigd.
+`deploy.sh` (script in home directory op Mac) doet automatisch:
+1. `git add` + `git commit` + `git push` naar GitHub
+2. SSH naar RPi → `cd ~/Zarlardinge_Dashboards && git pull`
+3. Herstart `zarlar.service` indien `server.js` gewijzigd
+
+**Bestanden op RPi staan in:**
+```
+/home/fidel/Zarlardinge_Dashboards/ESP32_Zarlar/zarlar-rpi/
+```
+
+**GitHub repo = enige bron van waarheid.**
 
 ---
 
@@ -2090,161 +2153,5 @@ MAX_ROWS = 2000 (≈ 6 maanden bij 5-min interval).
 | 13 | sim_p1 | **oranje=SIM / groen=LIVE** |
 | 14–15 | Heap / RSSI | groen/amber/rood |
 
-> Dit document vervangt de historische §17 installatie-instructies voor nginx+cloudflared.
-> Die zijn niet meer relevant voor de huidige Tailscale+Node.js aanpak.
 
-*Energy Management System — Filip Delannoy — bijgewerkt april 2026*
 
-De Raspberry Pi fungeert als **permanente brug** tussen het internet en alle lokale
-Zarlar-controllers. Hij meet niets, stuurt niets aan — hij is uitsluitend een veilige
-en betrouwbare doorgang. Dit vervangt de Cloudflare Worker aanpak uit §6 (die Worker
-kon het lokale netwerk niet rechtstreeks bereiken).
-
-```
-[Buiten — overal ter wereld]        [Lokaal netwerk Zarlardinge]
-
-Telefoon Filip                 →    Pi Gateway (192.168.0.50)
-Telefoon Maarten               →      |
-Browser (overal)               →    nginx reverse proxy
-                                      |         |         |
-                               HVAC(.70)  ECO(.71)  SENRG(.73)
-                               ROOM(.80)  DASH(.60)  ...
-```
-
-De tunnel loopt altijd **outbound** van de Pi naar Cloudflare.
-Geen open poorten op de Telenet-router. Geen DynDNS nodig.
-Alle bestaande controllers blijven ongewijzigd — enkel de Pi heeft extra software.
-
-### 17.2 Hardware
-
-| Parameter | Waarde |
-| --- | --- |
-| Model | Raspberry Pi Zero 2W (voorkeur) of Pi 3/4 |
-| OS | Raspberry Pi OS Lite 64-bit (Bookworm) — geen desktop |
-| Vaste IP | 192.168.0.50 (DHCP-reservering op basis van MAC) |
-| Voeding | 5V USB-C, ~1,5W (Pi Zero 2W) |
-| Hostname | zarlar-gateway |
-| SD-kaartje | 16GB+, te schrijven via RPi Imager op Mac (USB-C adapter) |
-
-**Geen Homebridge, geen Node.js, geen npm.** Die complexiteit is precies waarom
-een vorige Pi onverwacht kapotging. Deze Pi draait enkel nginx + cloudflared +
-fail2ban + unattended-upgrades. Totaal RAM-gebruik: ~80 MB.
-
-### 17.3 Software stack
-
-| Component | Type | Gebruik | Onderhoud |
-| --- | --- | --- | --- |
-| nginx | Reverse proxy | Routeert URLs naar juiste controller | Quasi nul |
-| cloudflared | Cloudflare Tunnel | Veilige outbound tunnel naar internet | ~1x/jaar update |
-| systemd | Procesmanager | Auto-start + auto-restart bij crash | Automatisch |
-| unattended-upgrades | OS-updates | Automatisch patchen | Nul |
-| fail2ban | Bruteforce-bescherming | Blokkeert herhaalde mislukte logins | Nul |
-| Python (~50 lijnen) | Health dashboard | Status alle controllers op /status | Eenmalig schrijven |
-
-### 17.4 nginx configuratie
-
-```nginx
-# /etc/nginx/sites-available/zarlar
-server {
-    listen 80;
-    location /hvac/      { proxy_pass http://192.168.0.70/; }
-    location /eco/       { proxy_pass http://192.168.0.71/; }
-    location /senrg/     { proxy_pass http://192.168.0.73/; }
-    location /room/      { proxy_pass http://192.168.0.80/; }
-    location /dashboard/ { proxy_pass http://192.168.0.60/; }
-}
-```
-
-Één bestand. Eén keer instellen. Nieuwe controller = één extra regel + `sudo nginx -s reload`.
-
-### 17.5 Cloudflare Tunnel configuratie
-
-```yaml
-# /etc/cloudflared/config.yml
-tunnel: zarlar-home
-credentials-file: /home/pi/.cloudflared/<tunnel-id>.json
-ingress:
-  - hostname: controllers.zarlardinge.be
-    service: http://localhost:80
-  - service: http_status:404
-```
-
-Cloudflare genereert eenmalig een credentials-bestand bij `cloudflared tunnel create`.
-Daarna opent de Pi zelf de verbinding naar buiten — geen router-configuratie nodig.
-
-### 17.6 URL-structuur na activatie
-
-```
-https://controllers.zarlardinge.be/hvac/        → HVAC controller
-https://controllers.zarlardinge.be/eco/         → ECO Boiler
-https://controllers.zarlardinge.be/senrg/       → Smart Energy
-https://controllers.zarlardinge.be/room/        → Room Eetplaats
-https://controllers.zarlardinge.be/dashboard/   → Zarlar Dashboard
-https://controllers.zarlardinge.be/status       → Health overzicht alle controllers
-https://controllers.zarlardinge.be/eco/update   → OTA firmware van overal
-```
-
-### 17.7 Beveiliging via Cloudflare Access (gratis)
-
-| Endpoint | Toegang |
-| --- | --- |
-| `/*/` — dashboards | Vrij voor Filip + Maarten |
-| `/*/settings` | Vereist login (Google/GitHub) |
-| `/*/update` (OTA) | Enkel Filip |
-| `/status` | Vrij voor Filip + Maarten |
-
-### 17.8 Installatie stap voor stap
-
-**Stap 1 — SD-kaartje (Mac + RPi Imager):**
-```
-OS: Raspberry Pi OS Lite 64-bit (Bookworm)
-Geavanceerde instellingen:
-  Hostname:  zarlar-gateway
-  SSH:       inschakelen + publieke sleutel van Mac
-  WiFi:      SSID + wachtwoord Zarlardinge
-  Locale:    Belgium / nl_BE / Europe/Brussels
-```
-
-**Stap 2 — Basisbeveiliging:**
-```bash
-ssh pi@zarlar-gateway.local
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y unattended-upgrades fail2ban ufw
-sudo ufw allow ssh && sudo ufw allow 80 && sudo ufw enable
-```
-
-**Stap 3 — nginx:**
-```bash
-sudo apt install -y nginx
-# Config schrijven (zie 17.4)
-sudo nginx -t && sudo systemctl enable --now nginx
-```
-
-**Stap 4 — cloudflared:**
-```bash
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb -o cloudflared.deb
-sudo dpkg -i cloudflared.deb
-cloudflared tunnel login
-cloudflared tunnel create zarlar-home
-# Config schrijven (zie 17.5)
-sudo cloudflared service install
-sudo systemctl enable --now cloudflared
-```
-
-### 17.9 Onderhoud
-
-| Taak | Frequentie | Actie |
-| --- | --- | --- |
-| Beveiligingsupdates OS | Automatisch | Nul |
-| cloudflared update | ~1x/jaar | `sudo apt upgrade cloudflared` |
-| nginx uitbreiden | Bij nieuwe controller | 1 regel + `sudo nginx -s reload` |
-| Logs bekijken | Bij probleem | `journalctl -u cloudflared -u nginx` |
-| Reboot na kernel update | ~maandelijks | `sudo reboot` (30 sec downtime) |
-
-### 17.10 Openstaande actiepunten
-
-> ✅ **Alle AP12–AP15 zijn afgewerkt en vervangen door een betere aanpak.**
-> De nginx+cloudflared aanpak is nooit gerealiseerd — vervangen door **Node.js + Tailscale** (zie §18).
-> AP12–AP15 zijn verwijderd uit de actiepuntenlijst in §14.
-
-> Dit hoofdstuk (§17) blijft bewaard als historische referentie voor de oorspronkelijke aanpak.
