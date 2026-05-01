@@ -1,5 +1,5 @@
 # Energy Management System — Zarlardinge
-## Technisch werkdocument v1.9 — April 2026
+## Technisch werkdocument v2.0 — Mei 2026
 
 **ESP32-C6 · Arduino IDE · ESPAsyncWebServer · Matter · Google Sheets**
 *Filip Dworp (FiDel) — Zarlardinge (BE)*
@@ -1035,9 +1035,12 @@ Doel: een werkende "energiecoach" die meet en adviseert, maar nog niets automati
 Doel: automatisch sturen op basis van bewezen patronen.
 
 - ECO-boiler automatisch bij solar overschot (HTTP REST naar 192.168.0.71)
-- Tesla Wallcharger solar overdag + EPEX nachtladen
+- EV WON laden: solar overdag + EPEX nachtladen (Tesla Fleet API)
+- SMA westdak Modbus: productie uitlezen + curtailment bij negatieve EPEX
+- SMA zuiddak Speedwire: productie uitlezen (geen sturing)
 - Override-knoppen per verbruiker in UI
 - Dagschema EPEX: goedkoopste vensters automatisch benutten
+- Negatieve-prijs strategie: curtailment + alle groot verbruikers AAN
 
 ### Fase 3 — Thuisbatterij + digitale meter (~2028)
 
@@ -1543,7 +1546,248 @@ Sketch v0.3 (LED + push):
 
 ---
 
+
+
+---
+
+## 23. Slimme Sturingsstrategieën
+
+### 23.1 Doelstelling
+
+Het Smart Energy systeem maximaliseert de financiële opbrengst van onze installatie
+door vijf strategieën te combineren — afhankelijk van het contracttype, de EPEX-prijs,
+de solarproductie en het verbruiksprofiel.
+
+### 23.2 Strategie 1 — Eigenverbruik maximaliseren
+
+**Altijd de beste keuze:** elke kWh die je zelf verbruikt in plaats van te injecteren
+bespaart het verschil tussen afnameprijs (~28 ct) en injectieprijs (~5 ct) = **~23 ct/kWh**.
+
+Aanpak: schuif verbruik naar zonnige uren.
+- ECO-boiler: automatisch aan bij solar overschot
+- EV laden: overdag bij solar, niet 's nachts
+- Wasmachine/droogkast: advies via LED-strip en push
+
+### 23.3 Strategie 2 — Negatieve EPEX-prijzen benutten
+
+**Situatie:** bij sterk negatieve EPEX-prijzen (bijv. -50 ct/kWh op 1 mei 2026)
+kost afname van het net effectief:
+
+```
+Reële prijs = (-50 + 11,66) × 1,06 = -40,6 ct/kWh
+→ Je wordt BETAALD om stroom af te nemen!
+```
+
+Ondertussen levert injectie op: max(0, EPEX − 0,67) = **0 ct/kWh** (vloer).
+
+**Optimale actie bij negatieve EPEX:**
+1. **Curtailment:** beperk solarproductie (zie §23.4)
+2. **Alle grote verbruikers AAN:** ECO-boiler, EVs laden, WPs
+3. **Batterij laden van het net** (niet van solar — je wilt netafname maximaliseren)
+4. **Niet injecteren:** elke geïnjecteerde kWh levert 0 ct op
+
+**Financieel voorbeeld 1 mei 2026:**
+- EPEX = -50 ct/kWh gedurende 4 uur
+- Normaal: 8 kW solar → 32 kWh injectie → opbrengst: €0,00
+- Slim: curtail solar + afnemen 10 kW × 4u = 40 kWh × (-0,406) = **€16,24 winst**
+
+### 23.4 Strategie 3 — Solar curtailment (productiebeperking)
+
+**Definitie:** de solarproductie bewust verlagen door de omvormer te beperken,
+zodat de installatie minder (of niets) produceert.
+
+**Wanneer zinvol:**
+- EPEX negatief → injectie levert 0 ct, afname levert geld op
+- EPEX < onbalansafslag (0,67 ct) → injectie levert effectief 0 ct
+- Capaciteitstarief: als solar de netto afname maskeert maar de piek
+  op een ander moment valt, kan curtailment contraproductief zijn — analyseren
+
+**Hoe technisch realiseerbaar met onze omvormers:**
+
+| Omvormer | Protocol | Curtailment mogelijk? |
+| --- | --- | --- |
+| SMA SB3.6-1AV-41 (westdak) | **Modbus TCP (SunSpec)** | ✅ Ja — register WMaxLimPct |
+| SMA SB3600TL-21 (zuiddak, 2×) | Speedwire/Webconnect | ⚠️ Beperkt — enkel lezen, geen schrijven |
+
+**SMA SunSpec Modbus register voor curtailment:**
+```
+Register 40236 — WMaxLimPct (%)
+Type: uint16, schaalfactor ×100
+Bereik: 0–10000 (0% tot 100% van nominaal vermogen)
+Schrijven: holding register via Modbus TCP
+
+Voorbeeld ESP32:
+  modbus.writeRegister(40236, 5000);  // beperk tot 50% van nominaal
+  modbus.writeRegister(40236, 0);     // 0% = volledig uit
+  modbus.writeRegister(40236, 10000); // 100% = normaal
+
+Register 40237 — WMaxLim_Ena (enable)
+  0 = disabled, 1 = enabled
+  Moet eerst enabled worden voordat WMaxLimPct effect heeft
+```
+
+**Alleen westdak (3,3 kWp) is via Modbus stuurbaar.** Het zuiddak (8,8 kWp) kan enkel
+via Speedwire gelezen worden — geen schrijftoegang. Toch is curtailment van het
+westdak alleen al zinvol: 3,3 kW minder injectie + 3,3 kW meer netafname bij
+negatieve prijs = 6,6 kW verschil × 4u = 26,4 kWh × 40 ct = **€10,56 extra winst**.
+
+> ⚠️ Curtailment is enkel zinvol bij een **dynamisch contract na 2028**.
+> Met de huidige terugdraaiende teller is elke geproduceerde kWh geld waard.
+
+### 23.5 Strategie 4 — Day-ahead arbitrage (batterij)
+
+**Na 2028 met 10 kWh batterij:**
+```
+Goedkope uren (EPEX < 5 ct):  laad batterij van net
+Dure uren (EPEX > 25 ct):     ontlaad batterij naar verbruik
+Spread: (28 - 5) × 10 kWh × 92% = €2,12 per cyclus
+Jaarlijks potentieel: ~€150–200 (afhankelijk van prijsvolatiliteit)
+```
+
+### 23.6 Strategie 5 — Piekafvlakking (capaciteitstarief)
+
+**Na 2028 met digitale meter:**
+Het Fluvius capaciteitstarief (€54,20/kW/jaar) wordt berekend op de
+hoogste gemiddelde kwartier-afname per maand.
+
+Elke kW die de piek verlaagt bespaart €54,20/jaar.
+Een batterij die een piek van 8 kW afvlakt naar 4 kW bespaart: 4 × €54,20 = **€216,80/jaar**.
+
+**Aanpak:**
+- SENRG controller monitort realtime netto afname
+- Bij nadering MAX_PIEK: afschakelvolgorde (§7.6) + batterij ontladen
+- Advies-pixels 🍳👕 waarschuwen gebruiker
+
+### 23.7 Strategieoverzicht per scenario
+
+| Scenario | Eigenverbruik | Curtailment | Bat laden | Bat ontladen | Alle groot AAN |
+| --- | --- | --- | --- | --- | --- |
+| EPEX negatief | ✅ | ✅ westdak | ✅ van net | ❌ | ✅ |
+| EPEX goedkoop (0–10 ct) | ✅ | ❌ | ✅ van net | ❌ | ✅ ECO+EV |
+| EPEX normaal (10–20 ct) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| EPEX duur (>20 ct) | ✅ | ❌ | ❌ | ✅ | ❌ |
+| Solar overschot (elke prijs) | ✅ | ❌ | ✅ van solar | ❌ | ✅ ECO |
+| Dreigend pieklimiet | ❌ afschakelen | ❌ | ❌ | ✅ | ❌ afschakelen |
+
+---
+
+## 24. Overzicht stuurbare toestellen — interfaces en protocollen
+
+### 24.1 Volledige inventaris
+
+| Toestel | Locatie | Elektrisch | Interface | Protocol | Sturing via SENRG |
+| --- | --- | --- | --- | --- | --- |
+| **SMA SB3.6-1AV-41** | Westdak | 3,68 kW | Ethernet + WLAN | **Modbus TCP (SunSpec)** | ✅ Curtailment + readout |
+| **SMA SB3600TL-21** (×2) | Zuiddak | 2×3,6 kW | Ethernet | Speedwire (lezen) | ⚠️ Alleen lezen, geen sturing |
+| **ECO-boiler** | SCH | 2 kW | WiFi (ESP32) | HTTP REST `/set` | ✅ Aan/uit via 192.168.0.71 |
+| **EV WON (Tesla Wallcharger)** | WON | max 9 kW | WiFi | Tesla Fleet API (cloud) | ⚠️ Via cloud, niet lokaal |
+| **EV SCH** | SCH | max 9 kW | ? | ? | ⬜ Merk/type onbekend (AP6) |
+| **WP WON (Panasonic)** | WON | 2,5 kW | WiFi (CZ-TAW1) | Comfort Cloud API | ⚠️ Via cloud, beperkt |
+| **WP SCH (Panasonic)** | SCH | 2,5 kW | WiFi (CZ-TAW1) | Comfort Cloud API | ⚠️ Via cloud, beperkt |
+| **Thuisbatterij** (gepland) | — | 5 kW | Ethernet | Modbus TCP | ✅ Laden/ontladen/SOC |
+| **Room controllers** (×n) | Diverse | — | WiFi (ESP32) | HTTP REST `/set` | ✅ Verlichting aan/uit/dim |
+| **Regenwaterpomp** | SCH | — | — | — | ❌ NOOIT automatisch sturen |
+
+### 24.2 Per toestel — technische aanpak
+
+**SMA SB3.6-1AV-41 (westdak) — Modbus TCP:**
+```
+IP: te configureren via SMA Sunny Portal of direct
+Poort: 502 (standaard Modbus TCP)
+Unit ID: 3 (default SMA)
+Bibliotheek: ESP32 ModbusTCP (mbtcp.h)
+
+Uitlezen:
+  30775 — AC vermogen actueel (W)
+  30769 — Dagopbrengst (Wh)
+  30773 — Totale opbrengst (kWh)
+
+Sturen (curtailment):
+  40236 — WMaxLimPct (0–10000 = 0–100%)
+  40237 — WMaxLim_Ena (0/1)
+```
+
+**SMA SB3600TL-21 (zuiddak) — Speedwire:**
+```
+Protocol: SMA Speedwire (UDP multicast 239.12.255.254:9522)
+Enkel uitlezen: actueel vermogen, dagopbrengst
+Geen schrijftoegang — geen curtailment mogelijk
+Bibliotheek: SMA-SunnyBoy (community library)
+```
+
+**ECO-boiler — HTTP REST (al werkend):**
+```
+GET  http://192.168.0.71/json     → status (temperatuur, vermogen, aan/uit)
+POST http://192.168.0.71/set      → { "aan": true/false, "doel": 65 }
+Latentie: <50ms (lokaal netwerk)
+Betrouwbaarheid: hoog — zelfde Zarlar platform
+```
+
+**Tesla Wallcharger — Fleet API:**
+```
+Vereist: Tesla developer account + OAuth2 token
+Endpoint: https://fleet-api.prd.eu.vn.cloud.tesla.com
+Commando's: charge_start, charge_stop, set_charging_amps
+Latentie: 2–5 seconden (cloud)
+Nadeel: afhankelijk van Tesla servers
+Alternatief: lokale Tesla Wall Connector Gen3 API (experimenteel)
+```
+
+**Panasonic WP — Comfort Cloud:**
+```
+Vereist: CZ-TAW1 WiFi module + Panasonic Comfort Cloud account
+API: niet officieel gedocumenteerd, community reverse-engineered
+Commando's: set_temperature, set_mode (heat/cool/auto), power_on/off
+Latentie: 3–10 seconden (cloud)
+Nadeel: afhankelijk van Panasonic servers
+Beperking: max ~6 API calls per uur
+Alternatief: CZ-TAW1 reset + directe seriële communicatie (geavanceerd)
+```
+
+**Thuisbatterij (gepland 2028) — Modbus TCP:**
+```
+Huawei LUNA2000 of BYD:
+  Modbus TCP poort 502
+  Registers: SOC, laadvermogen, ontlaadvermogen, status
+  Commando's: laden/ontladen/idle, max vermogen instellen
+  Volledig lokaal — geen cloud afhankelijkheid
+  Dit is de reden waarom we Huawei/BYD verkiezen boven Tesla Powerwall
+```
+
+### 24.3 Prioriteit voor implementatie
+
+| Prioriteit | Toestel | Reden |
+| --- | --- | --- |
+| 1 — Nu | ECO-boiler | Al werkend, HTTP REST, lokaal |
+| 2 — Fase 2 | SMA westdak (Modbus) | Curtailment + uitlezen, lokaal |
+| 3 — Fase 2 | SMA zuiddak (Speedwire) | Uitlezen productie (geen sturing) |
+| 4 — Fase 2 | Tesla Wallcharger | EV laden solar/EPEX, cloud |
+| 5 — Later | WPs Comfort Cloud | Beperkte API, lage prioriteit |
+| 6 — 2028 | Thuisbatterij Modbus | Wacht op aankoop |
+| 7 — Later | EV SCH | Wacht op merk/type info (AP6) |
+
+### 24.4 Lokaal vs Cloud — architectuurbeslissing
+
+| Aspect | Lokaal (HTTP/Modbus) | Cloud (Tesla/Panasonic) |
+| --- | --- | --- |
+| Latentie | <100ms | 2–10 seconden |
+| Beschikbaarheid | Altijd (geen internet nodig) | Afhankelijk van servers |
+| Privacy | Volledig lokaal | Data naar fabrikant |
+| Complexiteit | Eenvoudig | OAuth2, tokens, rate limits |
+| Betrouwbaarheid | Hoog | Gemiddeld |
+
+**Ontwerpkeuze:** lokale sturing (ECO, Modbus, Room controllers) altijd prioritair.
+Cloud-sturing (Tesla, Panasonic) als aanvulling wanneer geen lokaal alternatief bestaat.
+Het systeem moet volledig functioneren zonder internetverbinding — cloud is bonus.
+
+
 ## 15. Versiegeschiedenis
+
+| Versie | Datum | Wijzigingen |
+| --- | --- | --- |
+| **v2.0** | Mei 2026 | §23 Slimme sturingsstrategieën: curtailment, negatieve EPEX, arbitrage, piekafvlakking. §24 Overzicht stuurbare toestellen: interfaces, protocollen, implementatieprioriteit per toestel. SMA Modbus curtailment registers gedocumenteerd. Lokaal vs cloud architectuurbeslissing. |
+
+
 
 | Versie | Datum | Inhoud |
 | --- | --- | --- |
